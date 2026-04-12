@@ -1466,7 +1466,7 @@ function upsertForecast(items, candidate) {
 }
 
 function normalizeCompanyRow(row) {
-  const external_snapshot = normalizeExternalPayload(row.external_snapshot || {});
+  const external_snapshot = normalizeExternalPayload(row.external_snapshot || {}, { source: "stored" });
   return {
     id: row.id,
     user_id: row.user_id,
@@ -2935,8 +2935,7 @@ function buildQuarterBuckets(company) {
 }
 
 function buildCompanyFromExternal(payload, existing = null) {
-  const normalized = normalizeExternalPayload(payload);
-  const mergedSnapshot = mergeExternalSnapshot(existing?.external_snapshot || null, normalized);
+  const mergedSnapshot = mergeExternalSnapshot(existing?.external_snapshot || null, payload);
   const company = mergedSnapshot.company || {};
   const nextSchedule = mergedSnapshot.earnings_calendar
     .filter((item) => item.date >= today())
@@ -2961,15 +2960,16 @@ function buildCompanyFromExternal(payload, existing = null) {
   };
 }
 
-function normalizeExternalPayload(payload) {
+function normalizeExternalPayload(payload, options = {}) {
+  const source = options.source || (payload?.normalized_version ? "stored" : "api");
   const company = extractEdinetData(payload?.company) || {};
   return {
     company,
-    annual_financials: normalizeAnnualFinancials(Array.isArray(payload?.annual_financials) ? payload.annual_financials : [], company),
-    quarterly_financials: normalizeQuarterlyFinancials(Array.isArray(payload?.quarterly_financials) ? payload.quarterly_financials : [], company),
-    ratios: normalizeRatioRows(Array.isArray(payload?.ratios) ? payload.ratios : [], company),
+    annual_financials: normalizeAnnualFinancials(Array.isArray(payload?.annual_financials) ? payload.annual_financials : [], company, { source }),
+    quarterly_financials: normalizeQuarterlyFinancials(Array.isArray(payload?.quarterly_financials) ? payload.quarterly_financials : [], company, { source }),
+    ratios: normalizeRatioRows(Array.isArray(payload?.ratios) ? payload.ratios : [], company, { source }),
     analysis: payload?.analysis || {},
-    tdnet_earnings: normalizeTdnetEarnings(payload?.tdnet_earnings),
+    tdnet_earnings: normalizeTdnetEarnings(payload?.tdnet_earnings, { source }),
     price_series: normalizePriceSeries(payload?.price_series),
     news_items: normalizeNewsItems(payload?.news_items),
     earnings_calendar: normalizeEarningsCalendar(payload?.earnings_calendar),
@@ -2977,24 +2977,25 @@ function normalizeExternalPayload(payload) {
     fetch_status: payload?.fetch_status || {},
     rights: { ...defaultRights(), ...(payload?.rights || {}) },
     synced_at: payload?.synced_at || null,
+    normalized_version: 2,
   };
 }
 
-function normalizeAnnualFinancials(rows, company) {
+function normalizeAnnualFinancials(rows, company, options = {}) {
   const endMonth = inferFiscalYearEndMonth(company);
   return [...rows].map((item) => {
     const fiscalYearEndMonth = Number(item.fiscal_year_end_month || getMonthFromDate(item.fiscal_year_end) || endMonth || 3);
     return {
       ...item,
       fiscal_year_end_month: fiscalYearEndMonth,
-      fiscal_year: normalizeFiscalYearValue(item, fiscalYearEndMonth, "annual"),
+      fiscal_year: normalizeFiscalYearValue(item, fiscalYearEndMonth, "annual", options),
       source_type: item.source_type || "yuho",
     };
   }).filter((item) => item.fiscal_year > 0)
     .sort((left, right) => compareQuarterDesc({ ...left, quarter: 4 }, { ...right, quarter: 4 }));
 }
 
-function normalizeQuarterlyFinancials(rows, company) {
+function normalizeQuarterlyFinancials(rows, company, options = {}) {
   const endMonth = inferFiscalYearEndMonth(company);
   return [...rows].map((item) => {
     const fiscalYearEndMonth = Number(item.fiscal_year_end_month || getMonthFromDate(item.fiscal_year_end) || endMonth || 3);
@@ -3002,27 +3003,27 @@ function normalizeQuarterlyFinancials(rows, company) {
       ...item,
       fiscal_year_end_month: fiscalYearEndMonth,
       quarter: parseQuarter(item.quarter),
-      fiscal_year: normalizeFiscalYearValue(item, fiscalYearEndMonth, "quarterly"),
+      fiscal_year: normalizeFiscalYearValue(item, fiscalYearEndMonth, "quarterly", options),
       source_type: item.source_type || "yuho",
     };
   }).filter((item) => item.fiscal_year > 0 && item.quarter > 0)
     .sort(compareQuarterDesc);
 }
 
-function normalizeRatioRows(rows, company) {
+function normalizeRatioRows(rows, company, options = {}) {
   const endMonth = inferFiscalYearEndMonth(company);
   return [...rows].map((item) => {
     const fiscalYearEndMonth = Number(item.fiscal_year_end_month || getMonthFromDate(item.fiscal_year_end) || endMonth || 3);
     return {
       ...item,
       fiscal_year_end_month: fiscalYearEndMonth,
-      fiscal_year: normalizeFiscalYearValue(item, fiscalYearEndMonth, "ratio"),
+      fiscal_year: normalizeFiscalYearValue(item, fiscalYearEndMonth, "ratio", options),
     };
   }).filter((item) => item.fiscal_year > 0)
     .sort((left, right) => compareQuarterDesc({ ...left, quarter: 4 }, { ...right, quarter: 4 }));
 }
 
-function normalizeTdnetEarnings(payload) {
+function normalizeTdnetEarnings(payload, options = {}) {
   const rows = Array.isArray(payload)
     ? payload
     : Array.isArray(payload?.data)
@@ -3035,7 +3036,7 @@ function normalizeTdnetEarnings(payload) {
     return {
       ...item,
       fiscal_year_end_month: fiscalYearEndMonth,
-      fiscal_year: normalizeFiscalYearValue(item, fiscalYearEndMonth, "tdnet"),
+      fiscal_year: normalizeFiscalYearValue(item, fiscalYearEndMonth, "tdnet", options),
       quarter: parseQuarter(item.quarter),
       source_type: item.source_type || "tdnet",
     };
@@ -3065,17 +3066,21 @@ function normalizeEarningsCalendar(items) {
 }
 
 function mergeExternalSnapshot(previousSnapshot, nextSnapshot) {
-  const previous = previousSnapshot ? normalizeExternalPayload(previousSnapshot) : normalizeExternalPayload({});
-  const next = normalizeExternalPayload(nextSnapshot || {});
+  const previous = previousSnapshot ? normalizeExternalPayload(previousSnapshot, { source: "stored" }) : normalizeExternalPayload({}, { source: "stored" });
+  const next = normalizeExternalPayload(nextSnapshot || {}, { source: "api" });
   return {
     ...previous,
     ...next,
     company: mergeCompanySnapshot(previous.company, next.company),
-    annual_financials: next.annual_financials.length ? next.annual_financials : previous.annual_financials,
-    quarterly_financials: next.quarterly_financials.length ? next.quarterly_financials : previous.quarterly_financials,
-    ratios: next.ratios.length ? next.ratios : previous.ratios,
+    annual_financials: mergeSnapshotRows(previous.annual_financials, next.annual_financials, annualKey, compareAnnualRowDate)
+      .sort((left, right) => compareQuarterDesc({ ...left, quarter: 4 }, { ...right, quarter: 4 })),
+    quarterly_financials: mergeSnapshotRows(previous.quarterly_financials, next.quarterly_financials, quarterKey, compareQuarterRowDate)
+      .sort(compareQuarterDesc),
+    ratios: mergeSnapshotRows(previous.ratios, next.ratios, annualKey, compareAnnualRowDate)
+      .sort((left, right) => compareQuarterDesc({ ...left, quarter: 4 }, { ...right, quarter: 4 })),
     analysis: hasContent(next.analysis) ? next.analysis : previous.analysis,
-    tdnet_earnings: next.tdnet_earnings.length ? next.tdnet_earnings : previous.tdnet_earnings,
+    tdnet_earnings: mergeSnapshotRows(previous.tdnet_earnings, next.tdnet_earnings, quarterKey, compareQuarterRowDate)
+      .sort(compareQuarterDesc),
     price_series: next.price_series.length ? next.price_series : previous.price_series,
     news_items: next.news_items.length ? next.news_items : previous.news_items,
     earnings_calendar: next.earnings_calendar.length ? next.earnings_calendar : previous.earnings_calendar,
@@ -3084,6 +3089,56 @@ function mergeExternalSnapshot(previousSnapshot, nextSnapshot) {
     rights: { ...(previous.rights || {}), ...(next.rights || {}) },
     synced_at: next.synced_at || previous.synced_at || null,
   };
+}
+
+function mergeSnapshotRows(previousRows, nextRows, keyBuilder, chooser) {
+  const map = new Map();
+  for (const item of Array.isArray(previousRows) ? previousRows : []) {
+    const key = keyBuilder(item);
+    if (key) map.set(key, item);
+  }
+  for (const item of Array.isArray(nextRows) ? nextRows : []) {
+    const key = keyBuilder(item);
+    if (!key) continue;
+    const existing = map.get(key);
+    map.set(key, existing ? chooser(existing, item) : item);
+  }
+  return [...map.values()];
+}
+
+function compareAnnualRowDate(existing, candidate) {
+  return compareRowFreshness(existing, candidate) <= 0 ? candidate : existing;
+}
+
+function compareQuarterRowDate(existing, candidate) {
+  return compareRowFreshness(existing, candidate) <= 0 ? candidate : existing;
+}
+
+function compareRowFreshness(left, right) {
+  const leftDate = getBestDisclosureDate(left);
+  const rightDate = getBestDisclosureDate(right);
+  if (leftDate !== rightDate) return String(leftDate).localeCompare(String(rightDate));
+  return countDefinedMetrics(left) - countDefinedMetrics(right);
+}
+
+function getBestDisclosureDate(item) {
+  return String(
+    item?.disclosure_date
+    || item?.submit_date
+    || item?.updated_at
+    || extractDateFromReference(item?.edinet_filing_url)
+    || extractDateFromReference(item?.detail_url)
+    || ""
+  );
+}
+
+function extractDateFromReference(value) {
+  const match = String(value || "").match(/(20\d{2})[/-]?(\d{2})[/-]?(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : "";
+}
+
+function countDefinedMetrics(item) {
+  return ["revenue", "operating_income", "ordinary_income", "net_income", "eps", "forecast_revenue", "forecast_operating_income", "forecast_ordinary_income", "forecast_net_income", "forecast_eps"].filter((key) => Number.isFinite(Number(item?.[key]))).length;
 }
 
 function mergeCompanySnapshot(previousCompany, nextCompany) {
@@ -3099,19 +3154,37 @@ function mergeCompanySnapshot(previousCompany, nextCompany) {
   };
 }
 
-function normalizeFiscalYearValue(item, fiscalYearEndMonth, mode) {
+function normalizeFiscalYearValue(item, fiscalYearEndMonth, mode, options = {}) {
+  const source = options.source || "api";
   const titleYear = extractFiscalYearFromTitle(item?.title);
   if (titleYear) return titleYear;
   const fiscalYearEnd = getFiscalYearFromEnd(item?.fiscal_year_end);
   if (fiscalYearEnd) return fiscalYearEnd;
+  if (source === "stored") {
+    const inferred = mode === "annual" || mode === "ratio"
+      ? inferAnnualFiscalYearFromDisclosure(item, fiscalYearEndMonth)
+      : inferFiscalYearFromQuarter({ ...item, fiscal_year_end_month: fiscalYearEndMonth });
+    if (inferred) return inferred;
+  }
   const rawFiscalYear = Number(item?.fiscal_year || 0);
   if (!rawFiscalYear) {
-    return mode === "tdnet" ? inferFiscalYearFromQuarter(item) : 0;
+    if (mode === "annual" || mode === "ratio") return inferAnnualFiscalYearFromDisclosure(item, fiscalYearEndMonth);
+    return inferFiscalYearFromQuarter({ ...item, fiscal_year_end_month: fiscalYearEndMonth });
   }
   if (item?.source_type === "ifis") return rawFiscalYear;
+  if (source === "stored") return rawFiscalYear;
   if (Number(fiscalYearEndMonth) === 12) return rawFiscalYear;
   if (mode === "tdnet" && !item?.fiscal_year_end && !titleYear) return rawFiscalYear;
   return rawFiscalYear + 1;
+}
+
+function inferAnnualFiscalYearFromDisclosure(item, fiscalYearEndMonth) {
+  const disclosure = parseDate(getBestDisclosureDate(item));
+  const endMonth = Number(fiscalYearEndMonth || getMonthFromDate(item?.fiscal_year_end) || 3);
+  if (!disclosure) return 0;
+  const year = disclosure.getUTCFullYear();
+  const month = disclosure.getUTCMonth() + 1;
+  return month > endMonth ? year : year - 1;
 }
 
 function extractFiscalYearFromTitle(title) {
