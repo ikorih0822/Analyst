@@ -1,0 +1,189 @@
+﻿<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0d5b52">
+  <title>日本株リサーチ・コックピット</title>
+  <link rel="manifest" href="./site.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <aside class="sidebar">
+      <div class="brand-block">
+        <p class="eyebrow">Solo Buy-Side Research</p>
+        <h1>日本株リサーチ・コックピット</h1>
+        <p class="lead">
+          日本株の企業調査、四半期実績整理、投資仮説、論点管理を一人で蓄積するための個人用アプリです。
+        </p>
+      </div>
+
+      <section class="side-card">
+        <div class="card-head">
+          <h2>接続設定</h2>
+        </div>
+        <label>
+          <span>Supabase URL</span>
+          <input id="supabaseUrlInput" type="url" placeholder="https://xxxx.supabase.co">
+        </label>
+        <label>
+          <span>Supabase Anon Key</span>
+          <textarea id="supabaseAnonKeyInput" rows="3" placeholder="公開可能な anon key を入力"></textarea>
+        </label>
+        <div class="button-row">
+          <button id="saveSupabaseConfigButton" type="button">設定保存</button>
+        </div>
+        <p id="supabaseConfigStatus" class="help-text">
+          GitHub Pages で公開する場合も anon key は公開可能です。RLS で自分のデータだけに絞ります。
+        </p>
+      </section>
+
+      <section class="side-card">
+        <div class="card-head">
+          <h2>ログイン</h2>
+        </div>
+        <label>
+          <span>メールアドレス</span>
+          <input id="emailInput" type="email" placeholder="you@example.com">
+        </label>
+        <label>
+          <span>パスワード</span>
+          <input id="passwordInput" type="password" placeholder="8文字以上推奨">
+        </label>
+        <div class="button-row two">
+          <button id="signInButton" type="button">ログイン</button>
+          <button id="signUpButton" class="ghost" type="button">新規登録</button>
+        </div>
+        <p id="authStatus" class="help-text">Supabase 設定を保存後、ログインしてください。</p>
+      </section>
+
+      <section class="side-card">
+        <div class="card-head">
+          <h2>企業取り込み</h2>
+        </div>
+        <label>
+          <span>検索</span>
+          <input id="importSearchInput" type="search" placeholder="7203 / E02144 / トヨタ">
+        </label>
+        <div class="button-row">
+          <button id="importSearchButton" type="button">候補を検索</button>
+        </div>
+        <p class="help-text">
+          検索自体は公開エンドポイントで動きます。取り込みと同期は Supabase Edge Function 経由で行います。
+        </p>
+        <div id="importResults" class="result-list"></div>
+      </section>
+
+      <section class="side-card">
+        <div class="card-head">
+          <h2>カバレッジ</h2>
+          <button id="newCompanyButton" class="ghost tiny" type="button">手動追加</button>
+        </div>
+        <label>
+          <span>検索</span>
+          <input id="companySearchInput" type="search" placeholder="銘柄コード / 会社名 / 業種">
+        </label>
+        <label>
+          <span>ステータス</span>
+          <select id="statusFilterSelect">
+            <option value="all">すべて</option>
+            <option value="重点">重点</option>
+            <option value="追跡">追跡</option>
+            <option value="再確認">再確認</option>
+          </select>
+        </label>
+        <div id="companyList" class="company-list"></div>
+      </section>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Research Workspace</p>
+          <h2 id="workspaceTitle">ログインして調査を開始</h2>
+          <p id="workspaceSubtitle" class="subtle">Supabase とログイン設定後に、会社データを読み込みます。</p>
+        </div>
+        <div class="button-row">
+          <button id="syncCompanyButton" class="ghost" type="button">EDINET 再同期</button>
+          <button id="exportButton" class="ghost" type="button">JSON 書き出し</button>
+          <button id="signOutButton" class="ghost" type="button">ログアウト</button>
+        </div>
+      </header>
+
+      <section id="dashboard" class="dashboard-grid"></section>
+
+      <section class="workspace">
+        <nav class="tab-bar" id="tabBar">
+          <button class="tab active" data-tab="overview" type="button">概要</button>
+          <button class="tab" data-tab="earnings" type="button">決算</button>
+          <button class="tab" data-tab="valuation" type="button">バリュエーション</button>
+          <button class="tab" data-tab="notes" type="button">調査ログ</button>
+          <button class="tab" data-tab="questions" type="button">論点</button>
+          <button class="tab" data-tab="settings" type="button">自動取得データ</button>
+        </nav>
+        <div id="workspaceContent" class="workspace-content"></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="companyDialog" class="modal">
+    <form id="companyForm" method="dialog" class="modal-form">
+      <div class="card-head">
+        <h2 id="companyDialogTitle">企業を追加</h2>
+        <button id="closeCompanyDialogButton" class="ghost tiny" type="button">閉じる</button>
+      </div>
+      <div class="form-grid">
+        <label>
+          <span>銘柄コード</span>
+          <input name="sec_code" maxlength="8" placeholder="7203">
+        </label>
+        <label>
+          <span>EDINET コード</span>
+          <input name="edinet_code" maxlength="8" placeholder="E02144">
+        </label>
+        <label>
+          <span>会社名</span>
+          <input name="name" required>
+        </label>
+        <label>
+          <span>業種</span>
+          <input name="industry">
+        </label>
+        <label>
+          <span>ステータス</span>
+          <select name="status">
+            <option value="追跡">追跡</option>
+            <option value="重点">重点</option>
+            <option value="再確認">再確認</option>
+          </select>
+        </label>
+        <label>
+          <span>次回決算予定</span>
+          <input name="next_earnings" type="date">
+        </label>
+        <label class="full">
+          <span>投資仮説</span>
+          <textarea name="thesis" rows="4"></textarea>
+        </label>
+        <label class="full">
+          <span>バリアントビュー</span>
+          <textarea name="variant_view" rows="4"></textarea>
+        </label>
+        <label class="full">
+          <span>主要論点</span>
+          <textarea name="key_debate" rows="4"></textarea>
+        </label>
+      </div>
+      <div class="button-row">
+        <button id="saveCompanyButton" type="submit">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

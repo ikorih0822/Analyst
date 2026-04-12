@@ -1,0 +1,9 @@
+﻿{
+  "name": "日本株リサーチ・コックピット",
+  "short_name": "研究帳",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f4efe4",
+  "theme_color": "#0d5b52",
+  "lang": "ja"
+}
