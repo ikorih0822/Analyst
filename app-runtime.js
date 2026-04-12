@@ -306,11 +306,30 @@ async function loadCompanies() {
 
 function render() {
   applyConfigToInputs();
-  renderTabs();
-  renderImportResults();
-  renderCompanyList();
-  renderDashboard();
-  renderWorkspace();
+  safeRenderStep("tabs", () => renderTabs());
+  safeRenderStep("import-results", () => renderImportResults());
+  safeRenderStep("company-list", () => renderCompanyList());
+  safeRenderStep("dashboard", () => renderDashboard(), () => {
+    if (el.dashboard) {
+      el.dashboard.innerHTML = `<article class="metric-card"><p class="eyebrow">Status</p><div class="metric-value">-</div><div class="dim">ダッシュボード表示でエラー</div></article>`;
+    }
+  });
+  safeRenderStep("workspace", () => renderWorkspace(), () => {
+    if (el.workspaceTitle) el.workspaceTitle.textContent = "表示の復旧を試しています";
+    if (el.workspaceSubtitle) el.workspaceSubtitle.textContent = "一部の画面表示でエラーが発生しました。概要タブへ戻るか、再読み込みして確認してください。";
+    if (el.workspaceContent) {
+      el.workspaceContent.innerHTML = `<div class="empty">画面の表示でエラーが発生しました。設定・ログインや銘柄一覧は引き続き利用できます。</div>`;
+    }
+  });
+}
+
+function safeRenderStep(label, task, onError) {
+  try {
+    task();
+  } catch (error) {
+    console.error(`Render step failed: ${label}`, error);
+    if (typeof onError === "function") onError(error);
+  }
 }
 
 function renderTabs() {
@@ -386,6 +405,36 @@ function renderDashboard() {
   `;
 }
 
+function renderActiveWorkspaceView(company) {
+  const renderers = {
+    overview: () => renderOverviewV2(company),
+    earnings: () => renderEarnings(company),
+    valuation: () => renderValuation(company),
+    peers: () => renderPeerComparison(company),
+    history: () => renderHistoricalComparison(company),
+    notes: () => renderNotesV2(company),
+    questions: () => renderNotesV2(company),
+    settings: () => renderAutoData(company),
+  };
+  const activeTab = state.ui.activeTab || "overview";
+  const renderCurrent = renderers[activeTab] || renderers.overview;
+  try {
+    return renderCurrent();
+  } catch (error) {
+    console.error(`Failed to render workspace tab: ${activeTab}`, error);
+    if (activeTab !== "overview") {
+      state.ui.activeTab = "overview";
+      saveUiState();
+      try {
+        return renderers.overview();
+      } catch (overviewError) {
+        console.error("Failed to render overview fallback", overviewError);
+      }
+    }
+    return `<div class="empty">画面表示でエラーが発生しました。概要表示へのフォールバックも失敗しています。再読み込みしても続く場合は知らせてください。</div>`;
+  }
+}
+
 function renderWorkspace() {
   const company = getSelectedCompany();
   if (!company) {
@@ -408,17 +457,7 @@ function renderWorkspace() {
     el.workspaceSubtitle.textContent = `${company.industry || "業種未設定"} · 更新 ${formatDateTime(company.updated_at)} · EDINET ${company.edinet_code || "未設定"}`;
   }
 
-  const views = {
-    overview: renderOverviewV2(company),
-    earnings: renderEarnings(company),
-    valuation: renderValuation(company),
-    peers: renderPeerComparison(company),
-    history: renderHistoricalComparison(company),
-    notes: renderNotesV2(company),
-    questions: renderNotesV2(company),
-    settings: renderAutoData(company),
-  };
-  el.workspaceContent.innerHTML = views[state.ui.activeTab] || views.overview;
+  el.workspaceContent.innerHTML = renderActiveWorkspaceView(company);
 }
 
 function renderOverview(company) {
@@ -3172,18 +3211,8 @@ function renderWorkspace() {
     el.workspaceSubtitle.textContent = `${company.industry || "業種未設定"} · 更新 ${formatDateTime(company.updated_at)} · EDINET ${company.edinet_code || "未設定"}`;
   }
 
-  const views = {
-    overview: renderOverviewV2(company),
-    earnings: renderEarnings(company),
-    valuation: renderValuation(company),
-    peers: renderPeerComparison(company),
-    history: renderHistoricalComparison(company),
-    notes: renderNotesV2(company),
-    questions: renderNotesV2(company),
-    settings: renderAutoData(company),
-  };
   if (el.workspaceContent) {
-    el.workspaceContent.innerHTML = views[state.ui.activeTab] || views.overview;
+    el.workspaceContent.innerHTML = renderActiveWorkspaceView(company);
   }
 }
 
