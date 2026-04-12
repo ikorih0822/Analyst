@@ -74,6 +74,8 @@ const el = {
   companyForm: document.querySelector("#companyForm"),
 };
 
+window.__researchAppBootStarted = true;
+window.__researchAppFatal = false;
 boot().catch(handleFatalError);
 
 async function boot() {
@@ -2672,6 +2674,60 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function renderWorkspace() {
+  const company = getSelectedCompany();
+  if (!company) {
+    if (el.workspaceTitle) el.workspaceTitle.textContent = state.session ? "企業を選択してください" : "ログインして調査を開始";
+    if (el.workspaceSubtitle) {
+      el.workspaceSubtitle.textContent = state.session
+        ? "左側のカバレッジから企業を選ぶか、企業取り込みから新規追加してください。"
+        : "設定保存とログイン後に、企業データを読み込めます。";
+    }
+    if (el.workspaceContent) {
+      el.workspaceContent.innerHTML = state.session
+        ? `<div class="empty">表示する企業がまだありません。</div>`
+        : `<div class="empty">表示する企業がまだありません。<div class="button-row"><button class="ghost" type="button" data-action="open-settings">設定・ログインを開く</button></div></div>`;
+    }
+    return;
+  }
+
+  if (el.workspaceTitle) el.workspaceTitle.textContent = `${company.sec_code || company.edinet_code || ""} ${company.name}`;
+  if (el.workspaceSubtitle) {
+    el.workspaceSubtitle.textContent = `${company.industry || "業種未設定"} · 更新 ${formatDateTime(company.updated_at)} · EDINET ${company.edinet_code || "未設定"}`;
+  }
+
+  const views = {
+    overview: renderOverviewV2(company),
+    earnings: renderEarnings(company),
+    valuation: renderValuation(company),
+    notes: renderNotesV2(company),
+    questions: renderNotesV2(company),
+    settings: renderAutoData(company),
+  };
+  if (el.workspaceContent) {
+    el.workspaceContent.innerHTML = views[state.ui.activeTab] || views.overview;
+  }
+}
+
+function handleFatalError(error) {
+  console.error(error);
+  window.__researchAppFatal = true;
+  setConfigStatus(`初期化に失敗しました: ${getErrorMessage(error)}`, true);
+  setAuthStatus("ページを再読み込みしてもう一度試してください。", true);
+  if (el.workspaceTitle) el.workspaceTitle.textContent = "アプリを初期化できませんでした";
+  if (el.workspaceSubtitle) {
+    el.workspaceSubtitle.textContent = "設定画面を開いて接続情報を確認し、再読み込みしてください。";
+  }
+  try {
+    renderTabs();
+    renderImportResults();
+    renderCompanyList();
+    renderDashboard();
+  } catch (renderError) {
+    console.error(renderError);
+  }
 }
 
 function renderAutoData(company) {

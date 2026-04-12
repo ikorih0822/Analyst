@@ -203,6 +203,8 @@
 
   <script>
     window.__researchAppBooted = false;
+    window.__researchAppBootStarted = false;
+    window.__researchAppFatal = false;
     window.__settingsInlineHandlers = true;
     (function () {
       const CONFIG_KEY = "jp-research-cockpit-config-v1";
@@ -332,12 +334,14 @@
         });
 
         window.setTimeout(() => {
-          if (window.__researchAppBooted) return;
+          if (window.__researchAppBooted || window.__researchAppFatal) return;
           const subtitle = document.querySelector("#workspaceSubtitle");
           if (subtitle) {
-            subtitle.textContent = "アプリ初期化に失敗しています。設定画面を開いて接続情報を確認してください。";
+            subtitle.textContent = window.__researchAppBootStarted
+              ? "アプリの読み込みに時間がかかっています。数秒待っても変わらない場合は再読み込みしてください。"
+              : "アプリの起動を待っています。数秒待っても変わらない場合は再読み込みしてください。";
           }
-        }, 1200);
+        }, 5000);
       });
     }());
   </script>
