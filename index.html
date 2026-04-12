@@ -12,58 +12,19 @@
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
+  <div id="sidebarScrim" class="sidebar-scrim" hidden></div>
   <div class="page-shell">
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <div class="brand-block">
-        <p class="eyebrow">Solo Buy-Side Research</p>
+        <div class="sidebar-mobile-head">
+          <p class="eyebrow">Solo Buy-Side Research</p>
+          <button id="closeSidebarButton" class="ghost tiny mobile-only" type="button">閉じる</button>
+        </div>
         <h1>日本株リサーチ・コックピット</h1>
         <p class="lead">
           日本株の企業調査、四半期実績整理、投資仮説、論点管理を一人で蓄積するための個人用アプリです。
         </p>
       </div>
-
-      <section class="side-card">
-        <div class="card-head">
-          <h2>接続設定</h2>
-        </div>
-        <label>
-          <span>Supabase URL</span>
-          <input id="supabaseUrlInput" type="url" placeholder="https://xxxx.supabase.co">
-        </label>
-        <label>
-          <span>Supabase Anon Key</span>
-          <textarea id="supabaseAnonKeyInput" rows="3" placeholder="公開可能な anon key を入力"></textarea>
-        </label>
-        <label>
-          <span>EDINET DB API Key</span>
-          <input id="edinetApiKeyInput" type="password" placeholder="各端末のブラウザにだけ保存">
-        </label>
-        <div class="button-row">
-          <button id="saveSupabaseConfigButton" type="button">設定保存</button>
-        </div>
-        <p id="supabaseConfigStatus" class="help-text">
-          Supabase は保存用、EDINET DB は取得用です。EDINET の API キーは各ブラウザにローカル保存します。
-        </p>
-      </section>
-
-      <section class="side-card">
-        <div class="card-head">
-          <h2>ログイン</h2>
-        </div>
-        <label>
-          <span>メールアドレス</span>
-          <input id="emailInput" type="email" placeholder="you@example.com">
-        </label>
-        <label>
-          <span>パスワード</span>
-          <input id="passwordInput" type="password" placeholder="8文字以上推奨">
-        </label>
-        <div class="button-row two">
-          <button id="signInButton" type="button">ログイン</button>
-          <button id="signUpButton" class="ghost" type="button">新規登録</button>
-        </div>
-        <p id="authStatus" class="help-text">Supabase 設定を保存後、ログインしてください。</p>
-      </section>
 
       <section class="side-card">
         <div class="card-head">
@@ -106,12 +67,16 @@
 
     <main class="main-area">
       <header class="topbar">
-        <div>
-          <p class="eyebrow">Research Workspace</p>
-          <h2 id="workspaceTitle">ログインして調査を開始</h2>
-          <p id="workspaceSubtitle" class="subtle">Supabase とログイン設定後に、会社データを読み込みます。</p>
+        <div class="topbar-head">
+          <button id="menuToggleButton" class="ghost tiny mobile-only" type="button">銘柄一覧</button>
+          <div>
+            <p class="eyebrow">Research Workspace</p>
+            <h2 id="workspaceTitle">ログインして調査を開始</h2>
+            <p id="workspaceSubtitle" class="subtle">Supabase とログイン設定後に、会社データを読み込みます。</p>
+          </div>
         </div>
-        <div class="button-row">
+        <div class="button-row topbar-actions">
+          <button id="settingsButton" class="ghost" type="button">設定・ログイン</button>
           <button id="syncCompanyButton" class="ghost" type="button">EDINET 再同期</button>
           <button id="exportButton" class="ghost" type="button">JSON 書き出し</button>
           <button id="signOutButton" class="ghost" type="button">ログアウト</button>
@@ -186,6 +151,55 @@
         <button id="saveCompanyButton" type="submit">保存</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="settingsDialog" class="modal">
+    <div class="modal-form settings-form">
+      <div class="card-head">
+        <h2>接続設定とログイン</h2>
+        <button id="closeSettingsDialogButton" class="ghost tiny" type="button">閉じる</button>
+      </div>
+      <div class="panel-grid settings-grid">
+        <section class="panel">
+          <h3>接続設定</h3>
+          <label>
+            <span>Supabase URL</span>
+            <input id="supabaseUrlInput" type="url" placeholder="https://xxxx.supabase.co">
+          </label>
+          <label>
+            <span>Supabase Anon Key</span>
+            <textarea id="supabaseAnonKeyInput" rows="4" placeholder="公開可能な anon key を入力"></textarea>
+          </label>
+          <label>
+            <span>EDINET DB API Key</span>
+            <input id="edinetApiKeyInput" type="password" placeholder="各端末のブラウザにだけ保存">
+          </label>
+          <div class="button-row">
+            <button id="saveSupabaseConfigButton" type="button">設定保存</button>
+          </div>
+          <p id="supabaseConfigStatus" class="help-text">
+            Supabase は保存用、EDINET DB は取得用です。EDINET の API キーは各ブラウザにローカル保存します。
+          </p>
+        </section>
+
+        <section class="panel">
+          <h3>ログイン</h3>
+          <label>
+            <span>メールアドレス</span>
+            <input id="emailInput" type="email" placeholder="you@example.com">
+          </label>
+          <label>
+            <span>パスワード</span>
+            <input id="passwordInput" type="password" placeholder="8文字以上推奨">
+          </label>
+          <div class="button-row two">
+            <button id="signInButton" type="button">ログイン</button>
+            <button id="signUpButton" class="ghost" type="button">新規登録</button>
+          </div>
+          <p id="authStatus" class="help-text">設定保存後、ログインしてください。</p>
+        </section>
+      </div>
+    </div>
   </dialog>
 
   <script type="module" src="./app.js"></script>

@@ -27,6 +27,13 @@ const state = {
 };
 
 const el = {
+  sidebar: document.querySelector("#sidebar"),
+  sidebarScrim: document.querySelector("#sidebarScrim"),
+  menuToggleButton: document.querySelector("#menuToggleButton"),
+  closeSidebarButton: document.querySelector("#closeSidebarButton"),
+  settingsButton: document.querySelector("#settingsButton"),
+  settingsDialog: document.querySelector("#settingsDialog"),
+  closeSettingsDialogButton: document.querySelector("#closeSettingsDialogButton"),
   supabaseUrlInput: document.querySelector("#supabaseUrlInput"),
   supabaseAnonKeyInput: document.querySelector("#supabaseAnonKeyInput"),
   edinetApiKeyInput: document.querySelector("#edinetApiKeyInput"),
@@ -69,13 +76,17 @@ async function boot() {
 
 function wireEvents() {
   el.saveSupabaseConfigButton.addEventListener("click", async () => {
-    state.config.supabaseUrl = el.supabaseUrlInput.value.trim();
-    state.config.supabaseAnonKey = el.supabaseAnonKeyInput.value.trim();
-    state.config.edinetApiKey = el.edinetApiKeyInput.value.trim();
-    saveConfig();
+    syncConfigFromInputs();
+    setConfigStatus("接続確認中...", false);
     await initSupabase();
     render();
   });
+
+  el.menuToggleButton?.addEventListener("click", toggleSidebar);
+  el.closeSidebarButton?.addEventListener("click", closeSidebar);
+  el.sidebarScrim?.addEventListener("click", closeSidebar);
+  el.settingsButton?.addEventListener("click", openSettingsDialog);
+  el.closeSettingsDialogButton?.addEventListener("click", () => el.settingsDialog.close());
 
   el.signInButton.addEventListener("click", signIn);
   el.signUpButton.addEventListener("click", signUp);
@@ -126,6 +137,7 @@ function wireEvents() {
 
     if (type === "select-company") {
       state.selectedCompanyId = id;
+      closeSidebar();
       render();
       return;
     }
@@ -234,12 +246,15 @@ async function initSupabase() {
 }
 
 async function signUp() {
+  syncConfigFromInputs();
+  if (!state.supabase) await initSupabase();
   if (!state.supabase) {
-    setAuthStatus("先に Supabase 設定を保存してください。", true);
+    setAuthStatus("設定を確認してください。", true);
     return;
   }
 
   try {
+    setAuthStatus("登録処理中...", false);
     const { error } = await state.supabase.auth.signUp({
       email: el.emailInput.value.trim(),
       password: el.passwordInput.value,
@@ -252,12 +267,15 @@ async function signUp() {
 }
 
 async function signIn() {
+  syncConfigFromInputs();
+  if (!state.supabase) await initSupabase();
   if (!state.supabase) {
-    setAuthStatus("先に Supabase 設定を保存してください。", true);
+    setAuthStatus("設定を確認してください。", true);
     return;
   }
 
   try {
+    setAuthStatus("ログイン中...", false);
     const { error, data } = await state.supabase.auth.signInWithPassword({
       email: el.emailInput.value.trim(),
       password: el.passwordInput.value,
@@ -265,6 +283,7 @@ async function signIn() {
     if (error) throw error;
     state.session = data.session;
     setAuthStatus(`ログイン中: ${data.user.email}`, false);
+    if (el.settingsDialog?.open) el.settingsDialog.close();
     await loadCompanies();
     render();
   } catch (error) {
@@ -538,8 +557,11 @@ function renderWorkspace() {
     el.workspaceTitle.textContent = state.session ? "企業を選択してください" : "ログインして調査を開始";
     el.workspaceSubtitle.textContent = state.session
       ? "左側の候補から企業を選ぶか、EDINET から取り込んでください。"
-      : "Supabase 設定とログインが完了すると、自分専用のバックエンドに保存されます。";
-    el.workspaceContent.innerHTML = `<div class="empty">表示する企業がまだありません。</div>`;
+      : "接続設定とログインを済ませると、自分専用のバックエンドに保存されます。";
+    el.workspaceContent.innerHTML = state.session
+      ? `<div class="empty">表示する企業がまだありません。</div>`
+      : `<div class="empty">表示する企業がまだありません。<div class="button-row"><button id="openSettingsInlineButton" class="ghost" type="button">設定・ログインを開く</button></div></div>`;
+    document.querySelector("#openSettingsInlineButton")?.addEventListener("click", openSettingsDialog, { once: true });
     return;
   }
 
@@ -1747,6 +1769,34 @@ function defaultRights() {
     edinetdb_note: "EDINET DB は個人用途の調査支援として利用しています。運用形態を変える前には規約本文の確認を推奨します。",
     price_note: "Yahoo Finance 系データは personal use only 前提です。このアプリはあなた個人が PC とスマホで参照する用途に寄せています。",
   };
+}
+
+function syncConfigFromInputs() {
+  state.config.supabaseUrl = el.supabaseUrlInput.value.trim();
+  state.config.supabaseAnonKey = el.supabaseAnonKeyInput.value.trim();
+  state.config.edinetApiKey = el.edinetApiKeyInput.value.trim();
+  saveConfig();
+}
+
+function openSettingsDialog() {
+  applyConfigToInputs();
+  el.settingsDialog?.showModal();
+  closeSidebar();
+}
+
+function toggleSidebar() {
+  const isOpen = el.sidebar?.classList.contains("open");
+  if (isOpen) {
+    closeSidebar();
+    return;
+  }
+  el.sidebar?.classList.add("open");
+  if (el.sidebarScrim) el.sidebarScrim.hidden = false;
+}
+
+function closeSidebar() {
+  el.sidebar?.classList.remove("open");
+  if (el.sidebarScrim) el.sidebarScrim.hidden = true;
 }
 
 function buildQuarterBuckets(company) {
