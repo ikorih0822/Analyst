@@ -195,7 +195,7 @@ function wireEvents() {
     if (formType === "forecast") await saveForecastForm(form);
     if (formType === "valuation") await saveValuationForm(form);
     if (formType === "note") await saveNoteForm(form);
-    if (formType === "question") await saveQuestionForm(form);
+    if (formType === "question") await saveQuestionFormV2(form);
   });
 
   document.addEventListener("pointermove", (event) => {
@@ -402,11 +402,11 @@ function renderWorkspace() {
   }
 
   const views = {
-    overview: renderOverview(company),
+    overview: renderOverviewV2(company),
     earnings: renderEarnings(company),
     valuation: renderValuation(company),
-    notes: renderNotes(company),
-    questions: renderQuestions(company),
+    notes: renderNotesV2(company),
+    questions: renderNotesV2(company),
     settings: renderAutoData(company),
   };
   el.workspaceContent.innerHTML = views[state.ui.activeTab] || views.overview;
@@ -496,9 +496,9 @@ function renderEarnings(company) {
       <section class="panel full">
         <div class="row-between"><h3>${earningsView === "quarterly" ? "四半期推移" : "通期推移"}</h3><span class="dim">最新は TDNet、履歴は Yuho を補完して表示します。</span></div>
         <div class="chart-grid">
-          <article class="mini-chart-card"><div class="chart-head"><strong>売上高</strong><span class="dim">${earningsView === "quarterly" ? "百万円 / 単四" : "百万円 / 通期"}</span></div>${renderFinancialChart(earningsView === "quarterly" ? quarterBuckets : annualRows, "revenue", earningsView)}</article>
-          <article class="mini-chart-card"><div class="chart-head"><strong>営業利益</strong><span class="dim">${earningsView === "quarterly" ? "百万円 / 単四" : "百万円 / 通期"}</span></div>${renderFinancialChart(earningsView === "quarterly" ? quarterBuckets : annualRows, "operating_income", earningsView)}</article>
-          <article class="mini-chart-card"><div class="chart-head"><strong>EPS</strong><span class="dim">円</span></div>${renderFinancialChart(earningsView === "quarterly" ? quarterBuckets : annualRows, "eps", earningsView)}</article>
+          <article class="mini-chart-card"><div class="chart-head"><strong>売上高</strong><span class="dim">${earningsView === "quarterly" ? "百万円 / 単四" : "百万円 / 通期"}</span></div>${renderFinancialChartV2(earningsView === "quarterly" ? quarterBuckets : annualRows, "revenue", earningsView)}</article>
+          <article class="mini-chart-card"><div class="chart-head"><strong>営業利益</strong><span class="dim">${earningsView === "quarterly" ? "百万円 / 単四" : "百万円 / 通期"}</span></div>${renderFinancialChartV2(earningsView === "quarterly" ? quarterBuckets : annualRows, "operating_income", earningsView)}</article>
+          <article class="mini-chart-card"><div class="chart-head"><strong>EPS</strong><span class="dim">円</span></div>${renderFinancialChartV2(earningsView === "quarterly" ? quarterBuckets : annualRows, "eps", earningsView)}</article>
         </div>
       </section>
       ${earningsView === "quarterly" ? renderQuarterlyEarningsSection(company, quarterBuckets, selectedBucket) : renderAnnualEarningsSection(company, annualRows)}
@@ -558,7 +558,7 @@ function renderValuation(company) {
             ${renderMetricChip("1年騰落率", formatSignedPercent(change))}
             ${renderMetricChip("概算 PER", formatTimes(roughPer))}
           </div>
-          ${renderPriceChart(priceSeries)}
+          ${renderPriceChartV2(priceSeries)}
         ` : `
           <strong>株価をまだ取得できていません</strong>
           <p class="dim">${escapeHtml(priceError || "EDINET 再同期で Edge Function 経由の株価取得を試します。")}</p>
@@ -647,6 +647,176 @@ function renderQuestions(company) {
             <div class="company-meta">担当: ${escapeHtml(item.owner || "自分")} · 状態: ${escapeHtml(item.status || "未着手")}</div>
           </article>
         `).join("") : `<div class="empty">論点はまだありません。</div>`}
+      </section>
+    </div>
+  `;
+}
+
+function renderOverviewV2(company) {
+  const latestAnnual = company.external_snapshot.annual_financials[0];
+  const latestPrice = company.external_snapshot.price_series.at(-1)?.close;
+  const latestNews = company.external_snapshot.news_items[0];
+  const companyInfo = company.external_snapshot.company || {};
+  const latestFinancials = companyInfo.latest_financials || {};
+  const latestEarnings = companyInfo.latest_earnings || {};
+  const analysisSummary = company.external_snapshot.analysis?.ai_summary?.text || "";
+  const marketSnapshot = company.external_snapshot.market_snapshot || {};
+  const referenceIndex = marketSnapshot.reference_index || {};
+  const performanceCheckpoint = marketSnapshot.performance_checkpoint || {};
+  return `
+    <div class="panel-grid">
+      <section class="panel">
+        <div class="row-between">
+          <h3>投資メモ</h3>
+          <div class="button-row">
+            <button class="ghost tiny" data-action="edit-company" data-id="${company.id}" type="button">企業情報を編集</button>
+            <button class="ghost tiny" data-action="delete-company" type="button">削除</button>
+          </div>
+        </div>
+        <form data-form="overview" class="stack">
+          <label><span>投資仮説</span><textarea name="thesis" rows="4">${escapeHtml(company.thesis)}</textarea></label>
+          <label><span>バリアントビュー</span><textarea name="variant_view" rows="4">${escapeHtml(company.variant_view)}</textarea></label>
+          <label><span>主要論点</span><textarea name="key_debate" rows="4">${escapeHtml(company.key_debate)}</textarea></label>
+          <div class="inline-grid two">
+            <label><span>ステータス</span>${renderStatusSelect(company.status)}</label>
+            <label><span>次回決算予定</span><input name="next_earnings" type="date" value="${escapeHtml(company.next_earnings || "")}"></label>
+          </div>
+          <div class="inline-grid four">
+            <label><span>Quality</span><input name="quality" type="number" min="1" max="5" value="${escapeHtml(String(company.scorecard.quality || 3))}"></label>
+            <label><span>Momentum</span><input name="momentum" type="number" min="1" max="5" value="${escapeHtml(String(company.scorecard.momentum || 3))}"></label>
+            <label><span>Valuation</span><input name="valuation_score" type="number" min="1" max="5" value="${escapeHtml(String(company.scorecard.valuation || 3))}"></label>
+            <label><span>Management</span><input name="management" type="number" min="1" max="5" value="${escapeHtml(String(company.scorecard.management || 3))}"></label>
+          </div>
+          <div class="button-row"><button type="submit">概要を保存</button></div>
+        </form>
+      </section>
+      <section class="panel">
+        <h3>会社プロフィール</h3>
+        <div class="timeline">
+          ${renderSummaryCard("会社名", company.name)}
+          ${renderSummaryCard("英文名", companyInfo.name_en || "-")}
+          ${renderSummaryCard("業種", company.industry || "未設定")}
+          ${renderSummaryCard("会計基準", latestFinancials.accounting_standard || companyInfo.accounting_standard || "-")}
+          ${renderSummaryCard("従業員数", Number.isFinite(Number(latestFinancials.num_employees)) ? `${formatNumber(latestFinancials.num_employees)} 人` : "-")}
+          ${renderSummaryCard("平均年収", Number.isFinite(Number(latestFinancials.avg_annual_salary)) ? `${formatNumber(Number(latestFinancials.avg_annual_salary) / 10000)} 万円` : "-")}
+          ${renderSummaryCard("最新株価", Number.isFinite(latestPrice) ? `${formatNumber(latestPrice)} 円` : "-")}
+          ${renderSummaryCard("PER / PBR", `${referenceIndex.per ? `${referenceIndex.per}x` : "-"} / ${referenceIndex.pbr ? `${referenceIndex.pbr}x` : "-"}`)}
+        </div>
+      </section>
+      <section class="panel full">
+        <h3>会社説明</h3>
+        <div class="stack">
+          <article class="summary-card">
+            <strong>AI サマリー</strong>
+            <p>${escapeHtml(analysisSummary || "会社説明はまだ取得されていません。EDINET 再同期後に更新してください。").replace(/\n/g, "<br>")}</p>
+          </article>
+          ${performanceCheckpoint.overall ? `
+            <article class="summary-card">
+              <strong>自動抽出された注目点</strong>
+              <p>${escapeHtml(performanceCheckpoint.overall)}</p>
+            </article>
+          ` : ""}
+        </div>
+      </section>
+      <section class="panel">
+        <h3>主要指標</h3>
+        <div class="timeline">
+          ${renderSummaryCard("直近売上高", latestAnnual ? formatMillions(latestAnnual.revenue) : "-")}
+          ${renderSummaryCard("直近営業利益", latestAnnual ? formatMillions(latestAnnual.operating_income) : "-")}
+          ${renderSummaryCard("直近EPS", latestAnnual?.eps ? `${formatNumber(latestAnnual.eps)} 円` : "-")}
+          ${renderSummaryCard("自己資本比率", Number.isFinite(Number(latestFinancials.equity_ratio_official)) ? `${(Number(latestFinancials.equity_ratio_official) * 100).toFixed(1)}%` : "-")}
+          ${renderSummaryCard("ROE", Number.isFinite(Number(latestFinancials.roe_official)) ? `${(Number(latestFinancials.roe_official) * 100).toFixed(1)}%` : "-")}
+          ${renderSummaryCard("信用スコア", companyInfo.credit_score ? `${companyInfo.credit_score}` : "-")}
+        </div>
+      </section>
+      <section class="panel">
+        <h3>最新決算</h3>
+        <div class="timeline">
+          ${renderSummaryCard("最新開示", latestEarnings.title || "-")}
+          ${renderSummaryCard("開示日", latestEarnings.disclosure_date ? formatDate(latestEarnings.disclosure_date) : "-")}
+          ${renderSummaryCard("売上高", Number.isFinite(Number(latestEarnings.revenue)) ? formatMillionsFromMn(latestEarnings.revenue) : "-")}
+          ${renderSummaryCard("営業利益", Number.isFinite(Number(latestEarnings.operating_income)) ? formatMillionsFromMn(latestEarnings.operating_income) : "-")}
+          ${renderSummaryCard("当期利益", Number.isFinite(Number(latestEarnings.net_income)) ? formatMillionsFromMn(latestEarnings.net_income) : "-")}
+          ${renderSummaryCard("会社予想EPS", Number.isFinite(Number(latestEarnings.forecast_eps)) ? formatYen(latestEarnings.forecast_eps) : "-")}
+        </div>
+      </section>
+      <section class="panel full">
+        <div class="row-between"><h3>最新ニュース</h3><span class="dim">IFIS / Yahoo Finance / Google News</span></div>
+        ${latestNews ? renderNewsList(company.external_snapshot.news_items.slice(0, 6)) : `<div class="empty">ニュースはまだ取得されていません。</div>`}
+      </section>
+    </div>
+  `;
+}
+
+function renderNotesV2(company) {
+  const unresolved = company.open_questions.filter((item) => item.status !== "解決");
+  const resolved = company.open_questions.filter((item) => item.status === "解決");
+  return `
+    <div class="panel-grid">
+      <section class="panel">
+        <h3>調査ログを追加</h3>
+        <form data-form="note" class="stack">
+          <div class="inline-grid three">
+            <label><span>日付</span><input name="date" type="date" value="${today()}"></label>
+            <label><span>カテゴリ</span><input name="category" value="調査ログ"></label>
+            <label><span>タイトル</span><input name="title"></label>
+          </div>
+          <label><span>本文</span><textarea name="body" rows="6"></textarea></label>
+          <div class="button-row"><button type="submit">ログを保存</button></div>
+        </form>
+      </section>
+      <section class="panel">
+        <h3>論点を追加</h3>
+        <form data-form="question" class="stack">
+          <label><span>論点</span><textarea name="text" rows="4"></textarea></label>
+          <div class="inline-grid two">
+            <label><span>担当</span><input name="owner" value="自分"></label>
+            <label><span>状態</span><select name="status"><option value="未解決">未解決</option><option value="確認中">確認中</option><option value="解決">解決</option></select></label>
+          </div>
+          <div class="button-row"><button type="submit">論点を保存</button></div>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="row-between"><h3>調査ログ</h3><span class="dim">${company.research_notes.length} 件</span></div>
+        ${company.research_notes.length ? company.research_notes.map((item) => `
+          <article class="summary-card">
+            <div class="row-between">
+              <strong>${escapeHtml(item.title || "無題")}</strong>
+              <button class="ghost tiny" data-action="delete-note" data-id="${escapeHtml(item.id)}" type="button">削除</button>
+            </div>
+            <div class="company-meta">${escapeHtml(item.date || "")}${item.category ? ` ・ ${escapeHtml(item.category)}` : ""}</div>
+            <p>${escapeHtml(item.body || "")}</p>
+          </article>
+        `).join("") : `<div class="empty">調査ログはまだありません。</div>`}
+      </section>
+      <section class="panel">
+        <div class="row-between"><h3>未解決論点</h3><span class="dim">${unresolved.length} 件</span></div>
+        ${unresolved.length ? unresolved.map((item) => `
+          <article class="summary-card">
+            <div class="row-between">
+              <strong>${escapeHtml(item.text || "")}</strong>
+              <div class="button-row">
+                <button class="ghost tiny" data-action="toggle-question" data-id="${escapeHtml(item.id)}" type="button">状態更新</button>
+                <button class="ghost tiny" data-action="delete-question" data-id="${escapeHtml(item.id)}" type="button">削除</button>
+              </div>
+            </div>
+            <div class="company-meta">担当: ${escapeHtml(item.owner || "自分")} ・ 状態: ${escapeHtml(item.status || "未解決")}</div>
+          </article>
+        `).join("") : `<div class="empty">未解決論点はありません。</div>`}
+        ${resolved.length ? `
+          <div class="stack">
+            <h4 class="section-title">解決済み</h4>
+            ${resolved.map((item) => `
+              <article class="summary-card">
+                <div class="row-between">
+                  <strong>${escapeHtml(item.text || "")}</strong>
+                  <button class="ghost tiny" data-action="delete-question" data-id="${escapeHtml(item.id)}" type="button">削除</button>
+                </div>
+                <div class="company-meta">担当: ${escapeHtml(item.owner || "自分")} ・ 状態: ${escapeHtml(item.status || "解決")}</div>
+              </article>
+            `).join("")}
+          </div>
+        ` : ""}
       </section>
     </div>
   `;
@@ -880,12 +1050,26 @@ async function removeItemFromSelected(field, id) {
   await updateCompany(company.id, { [field]: (company[field] || []).filter((item) => item.id !== id) }, "更新しました。");
 }
 
+async function saveQuestionFormV2(form) {
+  const company = getSelectedCompany();
+  if (!company) return;
+  const formData = new FormData(form);
+  const questions = [{
+    id: uid("question"),
+    text: String(formData.get("text") || ""),
+    owner: String(formData.get("owner") || "自分"),
+    status: String(formData.get("status") || "未解決"),
+  }, ...company.open_questions];
+  await updateCompany(company.id, { open_questions: questions }, "論点を追加しました。");
+  form.reset();
+}
+
 async function toggleQuestion(id) {
   const company = getSelectedCompany();
   if (!company) return;
   const next = company.open_questions.map((item) => {
     if (item.id !== id) return item;
-    const status = item.status === "未着手" ? "確認中" : item.status === "確認中" ? "解決" : "未着手";
+    const status = item.status === "未解決" ? "確認中" : item.status === "確認中" ? "解決" : "未解決";
     return { ...item, status };
   });
   await updateCompany(company.id, { open_questions: next }, "論点状態を更新しました。");
@@ -1215,7 +1399,7 @@ function computeStandaloneMetric(currentValue, previousValue, quarter, annualVal
     return Number.isFinite(annual) ? annual : null;
   }
   const previous = Number(previousValue);
-  return Number.isFinite(previous) ? current - previous : current;
+  return Number.isFinite(previous) ? current - previous : null;
 }
 
 function chooseLaterDisclosure(existing, candidate) {
@@ -1341,6 +1525,7 @@ function normalizeExternalPayload(payload) {
     price_series: normalizePriceSeries(payload?.price_series),
     news_items: normalizeNewsItems(payload?.news_items),
     earnings_calendar: normalizeEarningsCalendar(payload?.earnings_calendar),
+    market_snapshot: payload?.market_snapshot || {},
     fetch_status: payload?.fetch_status || {},
     rights: { ...defaultRights(), ...(payload?.rights || {}) },
     synced_at: payload?.synced_at || null,
@@ -1354,7 +1539,7 @@ function normalizeQuarterlyFinancials(rows, company) {
     fiscal_year: Number(item.fiscal_year || getFiscalYearFromEnd(item.fiscal_year_end) || 0),
     fiscal_year_end_month: Number(item.fiscal_year_end_month || getMonthFromDate(item.fiscal_year_end) || endMonth || 3),
     quarter: parseQuarter(item.quarter),
-    source_type: "yuho",
+    source_type: item.source_type || "yuho",
   })).sort(compareQuarterDesc);
 }
 
@@ -1481,7 +1666,7 @@ async function fetchExternalData(input) {
   const quotePageSchedule = extractYahooQuoteNextEarningsDate(quotePageState);
   const [priceSeries, newsItems] = await Promise.all([
     fetchYahooPriceSeries(ticker),
-    fetchGoogleNewsItems(company.name || input.name || "", ticker),
+    fetchRelatedNews(company.name || input.name || "", ticker),
   ]);
   return normalizeExternalPayload({
     company,
@@ -1493,6 +1678,7 @@ async function fetchExternalData(input) {
     price_series: priceSeries,
     news_items: newsItems,
     earnings_calendar: mergeCalendarEntries(extractEdinetArray(calendarRaw), quotePageSchedule, company, input),
+    market_snapshot: extractYahooQuoteMarketSnapshot(quotePageState),
     fetch_status: {
       mode: "browser-fallback",
       used_function: false,
@@ -1504,29 +1690,29 @@ async function fetchExternalData(input) {
 }
 
 async function tryFetchViaSupabaseFunction(input) {
+  const endpoint = `${state.config.supabaseUrl}/functions/v1/sync-company`;
+  const accessToken = state.session?.access_token || state.config.supabaseAnonKey;
+  const body = JSON.stringify({ ...input, edinetApiKey: state.config.edinetApiKey });
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: state.config.supabaseAnonKey,
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body,
+    });
+    if (response.ok) return await response.json();
+  } catch {}
+
   if (!state.supabase || !state.session) return null;
   try {
     const { data, error } = await state.supabase.functions.invoke("sync-company", { body: { ...input, edinetApiKey: state.config.edinetApiKey } });
     if (error) throw error;
     return data || null;
   } catch {
-    try {
-      const accessToken = state.session?.access_token;
-      if (!accessToken) return null;
-      const response = await fetch(`${state.config.supabaseUrl}/functions/v1/sync-company`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: state.config.supabaseAnonKey,
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ ...input, edinetApiKey: state.config.edinetApiKey }),
-      });
-      if (!response.ok) return null;
-      return await response.json();
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
@@ -1631,8 +1817,6 @@ async function fetchYahooPriceSeries(ticker) {
 }
 
 async function fetchGoogleNewsItems(companyName, ticker) {
-  const quotePageNews = await fetchYahooQuotePageNewsItems(ticker);
-  if (quotePageNews.length) return quotePageNews;
   if (!companyName && !ticker) return [];
   try {
     const response = await fetch(`https://news.google.com/rss/search?q=${encodeURIComponent([companyName, ticker].filter(Boolean).join(" OR "))}&hl=ja&gl=JP&ceid=JP:ja`);
@@ -1647,6 +1831,15 @@ async function fetchGoogleNewsItems(companyName, ticker) {
   } catch {
     return [];
   }
+}
+
+async function fetchRelatedNews(companyName, ticker) {
+  const [quotePageNews, googleNews, yahooNews] = await Promise.all([
+    fetchYahooQuotePageNewsItems(ticker),
+    fetchGoogleNewsItems(companyName, ticker),
+    fetchYahooNewsItems(ticker),
+  ]);
+  return mergeNewsItemGroups(quotePageNews, googleNews, yahooNews);
 }
 
 async function fetchYahooNewsItems(ticker) {
@@ -1691,9 +1884,13 @@ async function fetchYahooQuotePageState(ticker) {
     },
   });
   const html = await response.text();
-  const match = html.match(/window\.__PRELOADED_STATE__\s*=\s*(\{.*?\})\s*;\s*<\/script>/s);
-  if (!match) return null;
-  return JSON.parse(match[1]);
+  const marker = "window.__PRELOADED_STATE__ = ";
+  const start = html.indexOf(marker);
+  if (start < 0) return null;
+  const tail = html.slice(start + marker.length);
+  const end = tail.indexOf("</script>");
+  if (end < 0) return null;
+  return JSON.parse(tail.slice(0, end).replace(/;\s*$/, "").trim());
 }
 
 function extractYahooQuotePriceSeries(state) {
@@ -1745,6 +1942,16 @@ function extractYahooQuoteNextEarningsDate(state) {
   return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
 }
 
+function extractYahooQuoteMarketSnapshot(state) {
+  return {
+    price_board: state?.mainStocksPriceBoard?.priceBoard || {},
+    reference_index: state?.mainStocksDetail?.referenceIndex || {},
+    press_release_summary: state?.mainStocksPressReleaseSummary || {},
+    performance_checkpoint: state?.performanceCheckpoint || {},
+    stock_performance: state?.stockPerformance?.summaryInfo || {},
+  };
+}
+
 function mergeCalendarEntries(items, nextEarningsDate, company, input) {
   const rows = Array.isArray(items) ? [...items] : [];
   if (nextEarningsDate && !rows.some((item) => String(item.date || item.announcement_date || "") === nextEarningsDate)) {
@@ -1757,6 +1964,31 @@ function mergeCalendarEntries(items, nextEarningsDate, company, input) {
     });
   }
   return rows;
+}
+
+function mergeNewsItemGroups(...groups) {
+  const unique = new Map();
+  for (const items of groups) {
+    for (const item of Array.isArray(items) ? items : []) {
+      const title = String(item?.title || "").trim();
+      const link = String(item?.link || "").trim();
+      if (!title || !link || unique.has(link)) continue;
+      unique.set(link, {
+        title,
+        link,
+        source: String(item?.source || "").trim(),
+        published_at: normalizeNewsDate(item?.published_at || ""),
+      });
+    }
+  }
+  return [...unique.values()].sort((left, right) => String(right.published_at || "").localeCompare(String(left.published_at || ""))).slice(0, 12);
+}
+
+function extractYahooSourceLabel(note) {
+  const value = String(note || "").trim();
+  const match = value.match(/（(.+?)）/);
+  if (match) return match[1];
+  return value || "Yahoo!ファイナンス";
 }
 
 function renderFinancialChart(rowsInput, metric, mode) {
@@ -1821,12 +2053,82 @@ function renderPriceChart(series) {
   `;
 }
 
+function renderFinancialChartV2(rowsInput, metric, mode) {
+  const rows = [...rowsInput].slice(0, 12).reverse();
+  const values = rows.flatMap((item) => [getRowMetric(item, metric, true, mode), getRowMetric(item, metric, false, mode)]).filter(Number.isFinite);
+  if (!values.length) return `<div class="summary-card">表示できるデータがありません。</div>`;
+  const width = 720;
+  const height = 240;
+  const padding = 48;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const yTicks = buildNumericTicks(min, max, 4);
+  const coords = rows.map((item, index) => ({
+    x: padding + ((width - padding * 2) * index) / Math.max(rows.length - 1, 1),
+    label: item.label,
+    actual: getRowMetric(item, metric, true, mode),
+    forecast: getRowMetric(item, metric, false, mode),
+  }));
+  const actualPoints = coords.filter((item) => Number.isFinite(item.actual)).map((item) => `${item.x},${chartY(item.actual, min, range, height, padding)}`).join(" ");
+  const forecastPoints = coords.filter((item) => Number.isFinite(item.forecast)).map((item) => `${item.x},${chartY(item.forecast, min, range, height, padding)}`).join(" ");
+  const xTicks = buildCategoryTicks(rows.map((item) => item.label), width, padding);
+  return `
+    <svg viewBox="0 0 ${width} ${height}" class="price-chart" role="img" aria-label="業績推移">
+      <rect x="0" y="0" width="${width}" height="${height}" rx="16" fill="rgba(255,255,255,0.48)"></rect>
+      ${yTicks.map((tick) => `
+        <line x1="${padding}" y1="${chartY(tick, min, range, height, padding)}" x2="${width - padding}" y2="${chartY(tick, min, range, height, padding)}" stroke="rgba(67,52,31,0.12)"></line>
+        <text x="${padding - 10}" y="${chartY(tick, min, range, height, padding) + 4}" fill="#6d5d4b" font-size="12" text-anchor="end">${escapeHtml(formatChartAxisValue(tick, metric))}</text>
+      `).join("")}
+      <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" stroke="rgba(67,52,31,0.18)"></line>
+      <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="rgba(67,52,31,0.18)"></line>
+      ${actualPoints ? `<polyline fill="none" stroke="#0d5b52" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${actualPoints}"></polyline>` : ""}
+      ${forecastPoints ? `<polyline fill="none" stroke="#b87512" stroke-width="3" stroke-dasharray="8 6" stroke-linecap="round" stroke-linejoin="round" points="${forecastPoints}"></polyline>` : ""}
+      ${coords.map((item) => renderChartPoint(item, min, range, height, padding, metric, mode)).join("")}
+      ${xTicks.map((tick) => `<text x="${tick.x}" y="${height - 12}" fill="#6d5d4b" font-size="12" text-anchor="middle">${escapeHtml(tick.label)}</text>`).join("")}
+    </svg>
+  `;
+}
+
+function renderPriceChartV2(series) {
+  const width = 720;
+  const height = 240;
+  const padding = 48;
+  const values = series.map((item) => item.close);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const yTicks = buildNumericTicks(min, max, 4);
+  const dots = series.map((item, index) => ({
+    x: padding + ((width - padding * 2) * index) / Math.max(series.length - 1, 1),
+    y: chartY(item.close, min, range, height, padding),
+    date: item.date,
+    close: item.close,
+  }));
+  const points = dots.map((item) => `${item.x},${item.y}`).join(" ");
+  const xTicks = buildCategoryTicks(series.map((item) => formatDate(item.date).replace(/\//g, "-")), width, padding);
+  return `
+    <svg viewBox="0 0 ${width} ${height}" class="price-chart" role="img" aria-label="株価推移">
+      <rect x="0" y="0" width="${width}" height="${height}" rx="16" fill="rgba(255,255,255,0.48)"></rect>
+      ${yTicks.map((tick) => `
+        <line x1="${padding}" y1="${chartY(tick, min, range, height, padding)}" x2="${width - padding}" y2="${chartY(tick, min, range, height, padding)}" stroke="rgba(67,52,31,0.12)"></line>
+        <text x="${padding - 10}" y="${chartY(tick, min, range, height, padding) + 4}" fill="#6d5d4b" font-size="12" text-anchor="end">${escapeHtml(`${formatNumber(tick)} 円`)}</text>
+      `).join("")}
+      <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" stroke="rgba(67,52,31,0.18)"></line>
+      <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="rgba(67,52,31,0.18)"></line>
+      <polyline fill="none" stroke="#0d5b52" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${points}"></polyline>
+      ${dots.map((item) => `<circle cx="${item.x}" cy="${item.y}" r="4" fill="#0d5b52" data-point-tooltip="${escapeHtml(`${formatDate(item.date)} / 株価 ${formatNumber(item.close)} 円`)}"><title>${escapeHtml(`${formatDate(item.date)} / 株価 ${formatNumber(item.close)} 円`)}</title></circle>`).join("")}
+      ${xTicks.map((tick) => `<text x="${tick.x}" y="${height - 12}" fill="#6d5d4b" font-size="12" text-anchor="middle">${escapeHtml(tick.label)}</text>`).join("")}
+    </svg>
+  `;
+}
+
 function getRowMetric(row, metric, actual, mode) {
   if (actual) {
     const value = row.actual?.[metric];
     if (!Number.isFinite(value)) return null;
     if (metric === "eps") return value;
-    if (row.actual?.source_type === "tdnet") return value;
+    if (isMillionBasedSource(row.actual?.source_type)) return value;
     return value / 1000000;
   }
   const raw = mode === "annual"
@@ -1840,6 +2142,27 @@ function getRowMetric(row, metric, actual, mode) {
 
 function chartY(value, min, range, height, padding) {
   return height - padding - ((value - min) / range) * (height - padding * 2);
+}
+
+function buildNumericTicks(min, max, count) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
+  if (min === max) return [min];
+  return Array.from({ length: count + 1 }, (_, index) => max - ((max - min) * index) / count);
+}
+
+function buildCategoryTicks(labels, width, padding) {
+  if (!labels.length) return [];
+  const step = Math.max(1, Math.ceil(labels.length / 4));
+  return labels.map((label, index) => ({ label, index }))
+    .filter((item) => item.index === 0 || item.index === labels.length - 1 || item.index % step === 0)
+    .map((item) => ({
+      label: item.label,
+      x: padding + ((width - padding * 2) * item.index) / Math.max(labels.length - 1, 1),
+    }));
+}
+
+function formatChartAxisValue(value, metric) {
+  return metric === "eps" ? `${formatNumber(value)} 円` : `${formatNumber(value)} 百万円`;
 }
 
 function renderChartPoint(item, min, range, height, padding, metric, mode) {
@@ -1872,6 +2195,7 @@ function renderQuarterDetail(company, bucket) {
 function buildQuarterLinks(company, bucket) {
   const links = [];
   if (bucket.tdnet?.pdf_url) links.push({ label: "決算短信 PDF", url: bucket.tdnet.pdf_url });
+  if (bucket.source_actual?.detail_url) links.push({ label: "IFIS 決算速報", url: bucket.source_actual.detail_url });
   const annualMatch = company.external_snapshot.annual_financials.find((item) => Number(item.fiscal_year) === Number(bucket.fiscal_year) && item.edinet_filing_url);
   if (annualMatch?.edinet_filing_url) links.push({ label: "有価証券報告書", url: annualMatch.edinet_filing_url });
   links.push({ label: "決算説明資料を検索", url: `https://www.google.com/search?q=${encodeURIComponent(`${company.name} ${bucket.label} 決算説明資料`)}` });
@@ -1971,7 +2295,11 @@ function renderMetricPair(actualRecord, metric, forecastValue, forecastInMillion
 }
 
 function renderBadges(bucket) {
-  return [bucket.actual ? `<span class="badge badge-actual">実績</span>` : "", bucket.forecast ? `<span class="badge badge-forecast">予想</span>` : "", bucket.tdnet?.pdf_url ? `<span class="badge badge-doc">資料</span>` : ""].filter(Boolean).join("");
+  return [
+    bucket.actual ? `<span class="badge badge-actual">実績</span>` : "",
+    bucket.forecast ? `<span class="badge badge-forecast">予想</span>` : "",
+    (bucket.tdnet?.pdf_url || bucket.source_actual?.detail_url) ? `<span class="badge badge-doc">資料</span>` : "",
+  ].filter(Boolean).join("");
 }
 
 function renderDetailMetric(actualRecord, metric, forecastValue, forecastInMillions) {
@@ -1990,7 +2318,11 @@ function formatActualMetric(actualRecord, metric) {
   const value = Number(actualRecord[metric]);
   if (!Number.isFinite(value)) return "-";
   if (metric === "eps") return formatYen(value);
-  return actualRecord.source_type === "tdnet" ? formatMillionsFromMn(value) : formatMillions(value);
+  return isMillionBasedSource(actualRecord.source_type) ? formatMillionsFromMn(value) : formatMillions(value);
+}
+
+function isMillionBasedSource(sourceType) {
+  return sourceType === "tdnet" || sourceType === "ifis";
 }
 
 function renderMonthOptions(selected) {
@@ -2047,8 +2379,9 @@ function saveConfig() {
 function loadUiState() {
   try {
     const parsed = JSON.parse(localStorage.getItem(LOCAL_UI_KEY) || "{}") || {};
+    const activeTab = parsed.activeTab === "questions" ? "notes" : parsed.activeTab;
     return {
-      activeTab: parsed.activeTab || "overview",
+      activeTab: activeTab || "overview",
       earningsView: parsed.earningsView || "quarterly",
       selectedQuarterKeys: parsed.selectedQuarterKeys || {},
     };
@@ -2339,4 +2672,541 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function renderAutoData(company) {
+  const snapshot = company.external_snapshot;
+  return `
+    <div class="panel-grid">
+      <section class="panel">
+        <h3>自動取得データ</h3>
+        <div class="timeline">
+          ${renderSummaryCard("EDINET コード", company.edinet_code || "未設定")}
+          ${renderSummaryCard("年次件数", String(snapshot.annual_financials.length))}
+          ${renderSummaryCard("四半期件数", String(snapshot.quarterly_financials.length))}
+          ${renderSummaryCard("TDNet 件数", String(snapshot.tdnet_earnings.length))}
+          ${renderSummaryCard("ニュース件数", String(snapshot.news_items.length))}
+          ${renderSummaryCard("決算予定件数", String(snapshot.earnings_calendar.length))}
+          ${renderSummaryCard("株価件数", String(snapshot.price_series.length))}
+          ${renderSummaryCard("最終同期", formatDateTime(snapshot.synced_at))}
+        </div>
+      </section>
+      <section class="panel">
+        <h3>取得メモ</h3>
+        ${renderSummaryCard("EDINET DB", snapshot.rights?.edinetdb_note || defaultRights().edinetdb_note)}
+        ${renderSummaryCard("株価データ", snapshot.rights?.price_note || defaultRights().price_note)}
+        ${snapshot.fetch_status?.edinet_error ? renderSummaryCard("EDINET 再同期メモ", snapshot.fetch_status.edinet_error) : ""}
+        ${snapshot.fetch_status?.price_error ? renderSummaryCard("株価取得メモ", snapshot.fetch_status.price_error) : ""}
+        ${snapshot.fetch_status?.news_error ? renderSummaryCard("ニュース取得メモ", snapshot.fetch_status.news_error) : ""}
+      </section>
+    </div>
+  `;
+}
+
+function renderOverviewV2(company) {
+  const latestAnnual = company.external_snapshot.annual_financials[0];
+  const latestPrice = company.external_snapshot.price_series.at(-1)?.close;
+  const latestNews = company.external_snapshot.news_items[0];
+  const companyInfo = company.external_snapshot.company || {};
+  const latestFinancials = companyInfo.latest_financials || {};
+  const latestEarnings = companyInfo.latest_earnings || {};
+  const analysisSummary = company.external_snapshot.analysis?.ai_summary?.text || "";
+  const companySummary = companyInfo.summary_text || companyInfo.meta_description || "";
+  const marketSnapshot = company.external_snapshot.market_snapshot || {};
+  const referenceIndex = marketSnapshot.reference_index || {};
+  const performanceCheckpoint = marketSnapshot.performance_checkpoint || {};
+  return `
+    <div class="panel-grid">
+      <section class="panel">
+        <div class="row-between">
+          <h3>投資メモ</h3>
+          <div class="button-row">
+            <button class="ghost tiny" data-action="edit-company" data-id="${company.id}" type="button">企業情報を編集</button>
+            <button class="ghost tiny" data-action="delete-company" type="button">削除</button>
+          </div>
+        </div>
+        <form data-form="overview" class="stack">
+          <label><span>投資仮説</span><textarea name="thesis" rows="4">${escapeHtml(company.thesis)}</textarea></label>
+          <label><span>バリアントビュー</span><textarea name="variant_view" rows="4">${escapeHtml(company.variant_view)}</textarea></label>
+          <label><span>主要論点</span><textarea name="key_debate" rows="4">${escapeHtml(company.key_debate)}</textarea></label>
+          <div class="inline-grid two">
+            <label><span>ステータス</span>${renderStatusSelect(company.status)}</label>
+            <label><span>次回決算予定</span><input name="next_earnings" type="date" value="${escapeHtml(company.next_earnings || "")}"></label>
+          </div>
+          <div class="inline-grid four">
+            <label><span>Quality</span><input name="quality" type="number" min="1" max="5" value="${escapeHtml(String(company.scorecard.quality || 3))}"></label>
+            <label><span>Momentum</span><input name="momentum" type="number" min="1" max="5" value="${escapeHtml(String(company.scorecard.momentum || 3))}"></label>
+            <label><span>Valuation</span><input name="valuation_score" type="number" min="1" max="5" value="${escapeHtml(String(company.scorecard.valuation || 3))}"></label>
+            <label><span>Management</span><input name="management" type="number" min="1" max="5" value="${escapeHtml(String(company.scorecard.management || 3))}"></label>
+          </div>
+          <div class="button-row"><button type="submit">概要を保存</button></div>
+        </form>
+      </section>
+      <section class="panel">
+        <h3>会社プロフィール</h3>
+        <div class="timeline">
+          ${renderSummaryCard("会社名", company.name)}
+          ${renderSummaryCard("英語表記", companyInfo.name_en || "-")}
+          ${renderSummaryCard("業種", company.industry || "未設定")}
+          ${renderSummaryCard("会計基準", latestFinancials.accounting_standard || companyInfo.accounting_standard || "-")}
+          ${renderSummaryCard("従業員数", Number.isFinite(Number(latestFinancials.num_employees)) ? `${formatNumber(latestFinancials.num_employees)} 人` : "-")}
+          ${renderSummaryCard("平均年収", Number.isFinite(Number(latestFinancials.avg_annual_salary)) ? `${formatNumber(Number(latestFinancials.avg_annual_salary) / 10000)} 万円` : "-")}
+          ${renderSummaryCard("最新株価", Number.isFinite(latestPrice) ? `${formatNumber(latestPrice)} 円` : "-")}
+          ${renderSummaryCard("PER / PBR", `${referenceIndex.per ? `${referenceIndex.per}x` : "-"} / ${referenceIndex.pbr ? `${referenceIndex.pbr}x` : "-"}`)}
+        </div>
+      </section>
+      <section class="panel full">
+        <h3>会社説明・要約</h3>
+        <div class="stack">
+          ${companySummary ? `
+            <article class="summary-card">
+              <strong>会社説明</strong>
+              <p>${escapeHtml(companySummary).replace(/\n/g, "<br>")}</p>
+            </article>
+          ` : ""}
+          <article class="summary-card">
+            <strong>AI サマリー</strong>
+            <p>${escapeHtml(analysisSummary || "会社要約はまだ取得されていません。EDINET 再同期後に更新されます。").replace(/\n/g, "<br>")}</p>
+          </article>
+          ${performanceCheckpoint.overall ? `
+            <article class="summary-card">
+              <strong>Yahoo!ファイナンスの概況</strong>
+              <p>${escapeHtml(performanceCheckpoint.overall)}</p>
+            </article>
+          ` : ""}
+        </div>
+      </section>
+      <section class="panel">
+        <h3>主要指標</h3>
+        <div class="timeline">
+          ${renderSummaryCard("最新売上高", latestAnnual ? formatMillions(latestAnnual.revenue) : "-")}
+          ${renderSummaryCard("最新営業利益", latestAnnual ? formatMillions(latestAnnual.operating_income) : "-")}
+          ${renderSummaryCard("最新 EPS", latestAnnual?.eps ? `${formatNumber(latestAnnual.eps)} 円` : "-")}
+          ${renderSummaryCard("自己資本比率", Number.isFinite(Number(latestFinancials.equity_ratio_official)) ? `${(Number(latestFinancials.equity_ratio_official) * 100).toFixed(1)}%` : "-")}
+          ${renderSummaryCard("ROE", Number.isFinite(Number(latestFinancials.roe_official)) ? `${(Number(latestFinancials.roe_official) * 100).toFixed(1)}%` : "-")}
+          ${renderSummaryCard("信用スコア", companyInfo.credit_score ? `${companyInfo.credit_score}` : "-")}
+        </div>
+      </section>
+      <section class="panel">
+        <h3>最新決算</h3>
+        <div class="timeline">
+          ${renderSummaryCard("最新開示", latestEarnings.title || "-")}
+          ${renderSummaryCard("開示日", latestEarnings.disclosure_date ? formatDate(latestEarnings.disclosure_date) : "-")}
+          ${renderSummaryCard("売上高", Number.isFinite(Number(latestEarnings.revenue)) ? formatMillionsFromMn(latestEarnings.revenue) : "-")}
+          ${renderSummaryCard("営業利益", Number.isFinite(Number(latestEarnings.operating_income)) ? formatMillionsFromMn(latestEarnings.operating_income) : "-")}
+          ${renderSummaryCard("当期利益", Number.isFinite(Number(latestEarnings.net_income)) ? formatMillionsFromMn(latestEarnings.net_income) : "-")}
+          ${renderSummaryCard("会社予想 EPS", Number.isFinite(Number(latestEarnings.forecast_eps)) ? formatYen(latestEarnings.forecast_eps) : "-")}
+        </div>
+      </section>
+      <section class="panel full">
+        <div class="row-between"><h3>最新ニュース</h3><span class="dim">IFIS / Yahoo Finance / Google News</span></div>
+        ${latestNews ? renderNewsList(company.external_snapshot.news_items.slice(0, 6)) : `<div class="empty">ニュースはまだ取得されていません。</div>`}
+      </section>
+    </div>
+  `;
+}
+
+function buildQuarterBuckets(company) {
+  const map = new Map();
+  const cumulativeMap = new Map();
+  const annualMap = new Map();
+
+  for (const item of company.external_snapshot.quarterly_financials) {
+    if (!Number.isFinite(item.quarter) || item.quarter < 1 || item.quarter > 3) continue;
+    cumulativeMap.set(quarterKey(item), item);
+  }
+
+  for (const item of company.external_snapshot.tdnet_earnings) {
+    if (!Number.isFinite(item.quarter)) continue;
+    const targetKey = item.quarter >= 1 && item.quarter <= 3 ? quarterKey(item) : annualKey(item);
+    const existing = item.quarter >= 1 && item.quarter <= 3 ? cumulativeMap.get(targetKey) : annualMap.get(targetKey);
+    if (item.quarter >= 1 && item.quarter <= 3) {
+      cumulativeMap.set(targetKey, chooseLaterDisclosure(existing, item));
+    } else if (item.quarter === 4) {
+      annualMap.set(targetKey, chooseLaterDisclosure(existing, item));
+    }
+  }
+
+  for (const item of company.external_snapshot.annual_financials) {
+    const key = annualKey(item);
+    if (!annualMap.has(key)) annualMap.set(key, item);
+  }
+
+  for (const cumulative of cumulativeMap.values()) {
+    const previous = cumulative.quarter > 1
+      ? cumulativeMap.get(quarterKey({ fiscal_year: cumulative.fiscal_year, fiscal_year_end_month: cumulative.fiscal_year_end_month, quarter: cumulative.quarter - 1 }))
+      : null;
+    const annual = annualMap.get(annualKey(cumulative));
+    const standalone = convertToStandaloneQuarter(cumulative, previous, annual);
+    const key = quarterKey(standalone);
+    map.set(key, {
+      ...(map.get(key) || makeQuarterBucket(standalone)),
+      actual: hasFinancialMetric(standalone) ? standalone : null,
+      source_actual: cumulative,
+      tdnet: cumulative.source_type === "tdnet" ? cumulative : map.get(key)?.tdnet || null,
+    });
+  }
+
+  for (const annual of annualMap.values()) {
+    const q4Key = quarterKey({ fiscal_year: annual.fiscal_year, fiscal_year_end_month: annual.fiscal_year_end_month, quarter: 4 });
+    const q3 = cumulativeMap.get(quarterKey({ fiscal_year: annual.fiscal_year, fiscal_year_end_month: annual.fiscal_year_end_month, quarter: 3 }));
+    if (!q3) continue;
+    const standaloneQ4 = {
+      ...annual,
+      quarter: 4,
+      source_type: annual.source_type || "yuho",
+      revenue: computeStandaloneMetric(annual.revenue, q3?.revenue, 4, annual.revenue),
+      operating_income: computeStandaloneMetric(annual.operating_income, q3?.operating_income, 4, annual.operating_income),
+      ordinary_income: computeStandaloneMetric(annual.ordinary_income, q3?.ordinary_income, 4, annual.ordinary_income),
+      net_income: computeStandaloneMetric(annual.net_income, q3?.net_income, 4, annual.net_income),
+      eps: computeStandaloneMetric(annual.eps, q3?.eps, 4, annual.eps),
+      submit_date: annual.submit_date || annual.disclosure_date || "",
+    };
+    map.set(q4Key, {
+      ...(map.get(q4Key) || makeQuarterBucket(standaloneQ4)),
+      actual: hasFinancialMetric(standaloneQ4) ? standaloneQ4 : null,
+      source_actual: annual,
+      tdnet: annual.source_type === "tdnet" ? annual : map.get(q4Key)?.tdnet || null,
+    });
+  }
+
+  for (const item of company.manual_forecast) {
+    const key = quarterKey(item);
+    map.set(key, { ...(map.get(key) || makeQuarterBucket(item)), forecast: item });
+  }
+
+  return [...map.values()].map((item) => ({ ...item, label: quarterLabel(item) })).sort(compareQuarterDesc);
+}
+
+function buildCompanyFromExternal(payload, existing = null) {
+  const normalized = normalizeExternalPayload(payload);
+  const mergedSnapshot = mergeExternalSnapshot(existing?.external_snapshot || null, normalized);
+  const company = mergedSnapshot.company || {};
+  const nextSchedule = mergedSnapshot.earnings_calendar
+    .filter((item) => item.date >= today())
+    .sort((left, right) => String(left.date).localeCompare(String(right.date)))[0];
+  return {
+    user_id: state.session.user.id,
+    sec_code: company.sec_code ? String(company.sec_code).slice(0, 4) : existing?.sec_code || null,
+    edinet_code: company.edinet_code || existing?.edinet_code || null,
+    name: company.name || existing?.name || "",
+    industry: company.industry || existing?.industry || null,
+    status: existing?.status || "追跡",
+    next_earnings: nextSchedule?.date || existing?.next_earnings || null,
+    thesis: existing?.thesis || "",
+    variant_view: existing?.variant_view || "",
+    key_debate: existing?.key_debate || "",
+    scorecard: existing?.scorecard || DEFAULT_SCORECARD,
+    manual_forecast: existing?.manual_forecast || [],
+    manual_valuation: existing?.manual_valuation || DEFAULT_VALUATION,
+    research_notes: existing?.research_notes || [],
+    open_questions: existing?.open_questions || [],
+    external_snapshot: { ...mergedSnapshot, synced_at: new Date().toISOString() },
+  };
+}
+
+function normalizeExternalPayload(payload) {
+  const company = extractEdinetData(payload?.company) || {};
+  return {
+    company,
+    annual_financials: normalizeAnnualFinancials(Array.isArray(payload?.annual_financials) ? payload.annual_financials : [], company),
+    quarterly_financials: normalizeQuarterlyFinancials(Array.isArray(payload?.quarterly_financials) ? payload.quarterly_financials : [], company),
+    ratios: normalizeRatioRows(Array.isArray(payload?.ratios) ? payload.ratios : [], company),
+    analysis: payload?.analysis || {},
+    tdnet_earnings: normalizeTdnetEarnings(payload?.tdnet_earnings),
+    price_series: normalizePriceSeries(payload?.price_series),
+    news_items: normalizeNewsItems(payload?.news_items),
+    earnings_calendar: normalizeEarningsCalendar(payload?.earnings_calendar),
+    market_snapshot: payload?.market_snapshot || {},
+    fetch_status: payload?.fetch_status || {},
+    rights: { ...defaultRights(), ...(payload?.rights || {}) },
+    synced_at: payload?.synced_at || null,
+  };
+}
+
+function normalizeAnnualFinancials(rows, company) {
+  const endMonth = inferFiscalYearEndMonth(company);
+  return [...rows].map((item) => {
+    const fiscalYearEndMonth = Number(item.fiscal_year_end_month || getMonthFromDate(item.fiscal_year_end) || endMonth || 3);
+    return {
+      ...item,
+      fiscal_year_end_month: fiscalYearEndMonth,
+      fiscal_year: normalizeFiscalYearValue(item, fiscalYearEndMonth, "annual"),
+      source_type: item.source_type || "yuho",
+    };
+  }).filter((item) => item.fiscal_year > 0)
+    .sort((left, right) => compareQuarterDesc({ ...left, quarter: 4 }, { ...right, quarter: 4 }));
+}
+
+function normalizeQuarterlyFinancials(rows, company) {
+  const endMonth = inferFiscalYearEndMonth(company);
+  return [...rows].map((item) => {
+    const fiscalYearEndMonth = Number(item.fiscal_year_end_month || getMonthFromDate(item.fiscal_year_end) || endMonth || 3);
+    return {
+      ...item,
+      fiscal_year_end_month: fiscalYearEndMonth,
+      quarter: parseQuarter(item.quarter),
+      fiscal_year: normalizeFiscalYearValue(item, fiscalYearEndMonth, "quarterly"),
+      source_type: item.source_type || "yuho",
+    };
+  }).filter((item) => item.fiscal_year > 0 && item.quarter > 0)
+    .sort(compareQuarterDesc);
+}
+
+function normalizeRatioRows(rows, company) {
+  const endMonth = inferFiscalYearEndMonth(company);
+  return [...rows].map((item) => {
+    const fiscalYearEndMonth = Number(item.fiscal_year_end_month || getMonthFromDate(item.fiscal_year_end) || endMonth || 3);
+    return {
+      ...item,
+      fiscal_year_end_month: fiscalYearEndMonth,
+      fiscal_year: normalizeFiscalYearValue(item, fiscalYearEndMonth, "ratio"),
+    };
+  }).filter((item) => item.fiscal_year > 0)
+    .sort((left, right) => compareQuarterDesc({ ...left, quarter: 4 }, { ...right, quarter: 4 }));
+}
+
+function normalizeTdnetEarnings(payload) {
+  const rows = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload?.data?.earnings)
+        ? payload.data.earnings
+        : [];
+  return rows.map((item) => {
+    const fiscalYearEndMonth = Number(item.fiscal_year_end_month || getMonthFromDate(item.fiscal_year_end) || inferFiscalYearEndMonthFromTitle(item.title) || 3);
+    return {
+      ...item,
+      fiscal_year_end_month: fiscalYearEndMonth,
+      fiscal_year: normalizeFiscalYearValue(item, fiscalYearEndMonth, "tdnet"),
+      quarter: parseQuarter(item.quarter),
+      source_type: item.source_type || "tdnet",
+    };
+  }).filter((item) => Number.isFinite(item.quarter) && item.quarter > 0 && item.fiscal_year > 0)
+    .sort(compareQuarterDesc);
+}
+
+function normalizeNewsItems(items) {
+  return (Array.isArray(items) ? items : []).map((item) => ({
+    title: String(item.title || "").trim(),
+    link: String(item.link || "").trim(),
+    source: String(item.source || "").trim(),
+    published_at: normalizeNewsDate(item.published_at || item.pubDate || ""),
+  })).filter((item) => item.title && isMeaningfulNewsLink(item.link))
+    .sort((a, b) => String(b.published_at).localeCompare(String(a.published_at)));
+}
+
+function normalizeEarningsCalendar(items) {
+  return (Array.isArray(items) ? items : []).map((item) => ({
+    date: String(item.date || item.announcement_date || ""),
+    code: String(item.code || item.sec_code || ""),
+    company: String(item.company || item.name || ""),
+    label: String(item.label || item.type || item.period_type || item.quarter || ""),
+    fiscal_end: String(item.fiscal_end || item.fiscal_year_end || ""),
+  })).filter((item) => item.date)
+    .sort((left, right) => String(left.date || "").localeCompare(String(right.date || "")));
+}
+
+function mergeExternalSnapshot(previousSnapshot, nextSnapshot) {
+  const previous = previousSnapshot ? normalizeExternalPayload(previousSnapshot) : normalizeExternalPayload({});
+  const next = normalizeExternalPayload(nextSnapshot || {});
+  return {
+    ...previous,
+    ...next,
+    company: mergeCompanySnapshot(previous.company, next.company),
+    annual_financials: next.annual_financials.length ? next.annual_financials : previous.annual_financials,
+    quarterly_financials: next.quarterly_financials.length ? next.quarterly_financials : previous.quarterly_financials,
+    ratios: next.ratios.length ? next.ratios : previous.ratios,
+    analysis: hasContent(next.analysis) ? next.analysis : previous.analysis,
+    tdnet_earnings: next.tdnet_earnings.length ? next.tdnet_earnings : previous.tdnet_earnings,
+    price_series: next.price_series.length ? next.price_series : previous.price_series,
+    news_items: next.news_items.length ? next.news_items : previous.news_items,
+    earnings_calendar: next.earnings_calendar.length ? next.earnings_calendar : previous.earnings_calendar,
+    market_snapshot: hasContent(next.market_snapshot) ? next.market_snapshot : previous.market_snapshot,
+    fetch_status: { ...(previous.fetch_status || {}), ...(next.fetch_status || {}) },
+    rights: { ...(previous.rights || {}), ...(next.rights || {}) },
+    synced_at: next.synced_at || previous.synced_at || null,
+  };
+}
+
+function mergeCompanySnapshot(previousCompany, nextCompany) {
+  const previous = previousCompany || {};
+  const next = nextCompany || {};
+  return {
+    ...previous,
+    ...next,
+    latest_financials: hasContent(next.latest_financials) ? next.latest_financials : previous.latest_financials,
+    latest_earnings: hasContent(next.latest_earnings) ? next.latest_earnings : previous.latest_earnings,
+    summary_text: next.summary_text || previous.summary_text || "",
+    meta_description: next.meta_description || previous.meta_description || "",
+  };
+}
+
+function normalizeFiscalYearValue(item, fiscalYearEndMonth, mode) {
+  const titleYear = extractFiscalYearFromTitle(item?.title);
+  if (titleYear) return titleYear;
+  const fiscalYearEnd = getFiscalYearFromEnd(item?.fiscal_year_end);
+  if (fiscalYearEnd) return fiscalYearEnd;
+  const rawFiscalYear = Number(item?.fiscal_year || 0);
+  if (!rawFiscalYear) {
+    return mode === "tdnet" ? inferFiscalYearFromQuarter(item) : 0;
+  }
+  if (item?.source_type === "ifis") return rawFiscalYear;
+  if (Number(fiscalYearEndMonth) === 12) return rawFiscalYear;
+  if (mode === "tdnet" && !item?.fiscal_year_end && !titleYear) return rawFiscalYear;
+  return rawFiscalYear + 1;
+}
+
+function extractFiscalYearFromTitle(title) {
+  const match = String(title || "").match(/(\d{4})\D+(\d{1,2})\D*期/);
+  return match ? Number(match[1]) : 0;
+}
+
+function inferFiscalYearEndMonthFromTitle(title) {
+  const match = String(title || "").match(/(\d{4})\D+(\d{1,2})\D*期/);
+  return match ? Number(match[2]) : 0;
+}
+
+function hasFinancialMetric(item) {
+  return ["revenue", "operating_income", "ordinary_income", "net_income", "eps"].some((key) => Number.isFinite(Number(item?.[key])));
+}
+
+function hasContent(value) {
+  if (!value) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return String(value).trim().length > 0;
+}
+
+function isMeaningfulNewsLink(link) {
+  const value = String(link || "").trim();
+  if (!value) return false;
+  return !/\/quote\/[^/?#]+(?:[?#]|$)/.test(value) && !/\/quote\/[^/?#]+\/(?:history|chart|forum|financials|performance|profile)(?:[/?#]|$)/.test(value);
+}
+
+function extractYahooQuoteNewsItems(state) {
+  const updatedAt = normalizeNewsDate(state?.symbolTopics?.updatedAtDateTime || state?.pageInfo?.currentDateTime || "");
+  const sources = (Array.isArray(state?.symbolTopics?.topics) ? state.symbolTopics.topics : [])
+    .flatMap((topic) => Array.isArray(topic?.sources) ? topic.sources : []);
+  const unique = new Map();
+  for (const source of sources) {
+    const link = String(source?.url || "").trim();
+    const title = String(source?.title || "").replace(/^ニュース\s*-\s*/, "").trim();
+    if (!title || !isMeaningfulNewsLink(link) || unique.has(link)) continue;
+    unique.set(link, {
+      title,
+      link,
+      source: extractYahooSourceLabel(source?.note),
+      published_at: updatedAt,
+    });
+  }
+  return [...unique.values()].slice(0, 10);
+}
+
+function mergeNewsItemGroups(...groups) {
+  const unique = new Map();
+  for (const items of groups) {
+    for (const item of Array.isArray(items) ? items : []) {
+      const title = String(item?.title || "").trim();
+      const link = String(item?.link || "").trim();
+      if (!title || !isMeaningfulNewsLink(link) || unique.has(link)) continue;
+      unique.set(link, {
+        title,
+        link,
+        source: String(item?.source || "").trim(),
+        published_at: normalizeNewsDate(item?.published_at || ""),
+      });
+    }
+  }
+  return [...unique.values()].sort((left, right) => String(right.published_at || "").localeCompare(String(left.published_at || ""))).slice(0, 12);
+}
+
+function extractYahooSourceLabel(note) {
+  const value = String(note || "").trim();
+  const match = value.match(/[(（]([^()（）]+)[)）]/);
+  if (match) return match[1];
+  return value || "Yahoo!ファイナンス";
+}
+
+function inferFiscalYearFromQuarter(item) {
+  if (item.fiscal_year && item.source_type === "ifis") return Number(item.fiscal_year);
+  const disclosure = parseDate(item.disclosure_date || item.submit_date);
+  const endMonth = Number(item.fiscal_year_end_month || getMonthFromDate(item.fiscal_year_end) || inferFiscalYearEndMonthFromTitle(item.title) || 3);
+  const quarter = parseQuarter(item.quarter);
+  if (!disclosure || !quarter) return 0;
+  const year = disclosure.getUTCFullYear();
+  const month = disclosure.getUTCMonth() + 1;
+  if (quarter === 4) {
+    return month > endMonth ? year : year - 1;
+  }
+  return month > endMonth ? year + 1 : year;
+}
+
+function displayFiscalYear(item) {
+  return Number(item?.fiscal_year || 0) || 0;
+}
+
+function extractFiscalYearFromTitle(title) {
+  const match = String(title || "").match(/(\d{4})\D+(\d{1,2})\D*期/);
+  return match ? Number(match[1]) : 0;
+}
+
+function inferFiscalYearEndMonthFromTitle(title) {
+  const match = String(title || "").match(/(\d{4})\D+(\d{1,2})\D*期/);
+  return match ? Number(match[2]) : 0;
+}
+
+function isMeaningfulNewsItem(title, link) {
+  const headline = String(title || "").trim();
+  if (!headline) return false;
+  if (!isMeaningfulNewsLink(link)) return false;
+  return !/(掲示板|株価・株式情報|株価履歴|銘柄時価|チャート|時系列)/.test(headline);
+}
+
+function normalizeNewsItems(items) {
+  return (Array.isArray(items) ? items : []).map((item) => ({
+    title: String(item.title || "").trim(),
+    link: String(item.link || "").trim(),
+    source: String(item.source || "").trim(),
+    published_at: normalizeNewsDate(item.published_at || item.pubDate || ""),
+  })).filter((item) => item.title && isMeaningfulNewsItem(item.title, item.link))
+    .sort((a, b) => String(b.published_at).localeCompare(String(a.published_at)));
+}
+
+function extractYahooQuoteNewsItems(state) {
+  const updatedAt = normalizeNewsDate(state?.symbolTopics?.updatedAtDateTime || state?.pageInfo?.currentDateTime || "");
+  const sources = (Array.isArray(state?.symbolTopics?.topics) ? state.symbolTopics.topics : [])
+    .flatMap((topic) => Array.isArray(topic?.sources) ? topic.sources : []);
+  const unique = new Map();
+  for (const source of sources) {
+    const link = String(source?.url || "").trim();
+    const title = String(source?.title || "").replace(/^ニュース\s*-\s*/, "").trim();
+    if (!title || !isMeaningfulNewsItem(title, link) || unique.has(link)) continue;
+    unique.set(link, {
+      title,
+      link,
+      source: extractYahooSourceLabel(source?.note),
+      published_at: updatedAt,
+    });
+  }
+  return [...unique.values()].slice(0, 10);
+}
+
+function mergeNewsItemGroups(...groups) {
+  const unique = new Map();
+  for (const items of groups) {
+    for (const item of Array.isArray(items) ? items : []) {
+      const title = String(item?.title || "").trim();
+      const link = String(item?.link || "").trim();
+      if (!title || !isMeaningfulNewsItem(title, link) || unique.has(link)) continue;
+      unique.set(link, {
+        title,
+        link,
+        source: String(item?.source || "").trim(),
+        published_at: normalizeNewsDate(item?.published_at || ""),
+      });
+    }
+  }
+  return [...unique.values()].sort((left, right) => String(right.published_at || "").localeCompare(String(left.published_at || ""))).slice(0, 12);
 }
