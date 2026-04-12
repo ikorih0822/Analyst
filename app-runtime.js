@@ -1005,6 +1005,7 @@ function buildQuarterBuckets(company) {
   for (const annual of annualMap.values()) {
     const q4Key = quarterKey({ fiscal_year: annual.fiscal_year, fiscal_year_end_month: annual.fiscal_year_end_month, quarter: 4 });
     const q3 = cumulativeMap.get(quarterKey({ fiscal_year: annual.fiscal_year, fiscal_year_end_month: annual.fiscal_year_end_month, quarter: 3 }));
+    if (!q3) continue;
     const standaloneQ4 = {
       ...annual,
       quarter: 4,
@@ -1476,6 +1477,8 @@ async function fetchExternalData(input) {
   const company = extractEdinetData(companyRaw) || {};
   const calendarRaw = await fetchEdinetCalendar(headers, company?.sec_code || input.secCode || "");
   const ticker = toYahooTicker(company?.sec_code || input.secCode || "");
+  const quotePageState = ticker ? await fetchYahooQuotePageState(ticker).catch(() => null) : null;
+  const quotePageSchedule = extractYahooQuoteNextEarningsDate(quotePageState);
   const [priceSeries, newsItems] = await Promise.all([
     fetchYahooPriceSeries(ticker),
     fetchGoogleNewsItems(company.name || input.name || "", ticker),
@@ -1489,7 +1492,7 @@ async function fetchExternalData(input) {
     tdnet_earnings: normalizeTdnetEarnings(earningsRaw),
     price_series: priceSeries,
     news_items: newsItems,
-    earnings_calendar: extractEdinetArray(calendarRaw),
+    earnings_calendar: mergeCalendarEntries(extractEdinetArray(calendarRaw), quotePageSchedule, company, input),
     fetch_status: {
       mode: "browser-fallback",
       used_function: false,
@@ -1587,6 +1590,8 @@ function extractEdinetArray(payload) {
 async function fetchYahooPriceSeries(ticker) {
   if (!ticker) return [];
   try {
+    const quotePageSeries = await fetchYahooQuotePagePriceSeries(ticker);
+    if (quotePageSeries.length) return quotePageSeries;
     for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
       try {
         const response = await fetch(`https://${host}/v8/finance/chart/${encodeURIComponent(ticker)}?range=1y&interval=1d&includePrePost=false&events=div%2Csplits`);
@@ -1626,8 +1631,8 @@ async function fetchYahooPriceSeries(ticker) {
 }
 
 async function fetchGoogleNewsItems(companyName, ticker) {
-  const yahooNews = await fetchYahooNewsItems(ticker);
-  if (yahooNews.length) return yahooNews;
+  const quotePageNews = await fetchYahooQuotePageNewsItems(ticker);
+  if (quotePageNews.length) return quotePageNews;
   if (!companyName && !ticker) return [];
   try {
     const response = await fetch(`https://news.google.com/rss/search?q=${encodeURIComponent([companyName, ticker].filter(Boolean).join(" OR "))}&hl=ja&gl=JP&ceid=JP:ja`);
@@ -1659,6 +1664,99 @@ async function fetchYahooNewsItems(ticker) {
   } catch {
     return [];
   }
+}
+
+async function fetchYahooQuotePagePriceSeries(ticker) {
+  try {
+    const state = await fetchYahooQuotePageState(ticker);
+    return extractYahooQuotePriceSeries(state);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchYahooQuotePageNewsItems(ticker) {
+  try {
+    const state = await fetchYahooQuotePageState(ticker);
+    return extractYahooQuoteNewsItems(state);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchYahooQuotePageState(ticker) {
+  const response = await fetch(`https://finance.yahoo.co.jp/quote/${encodeURIComponent(ticker)}`, {
+    headers: {
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+  });
+  const html = await response.text();
+  const match = html.match(/window\.__PRELOADED_STATE__\s*=\s*(\{.*?\})\s*;\s*<\/script>/s);
+  if (!match) return null;
+  return JSON.parse(match[1]);
+}
+
+function extractYahooQuotePriceSeries(state) {
+  const histories = Array.isArray(state?.mainItemDetailChartSetting?.timeSeriesData?.histories)
+    ? state.mainItemDetailChartSetting.timeSeriesData.histories
+    : Array.isArray(state?.mainYJChart?.chartInfo?.data)
+      ? state.mainYJChart.chartInfo.data
+      : [];
+  return histories.map((item) => {
+    const base = String(item.baseDatetime || item.date || "");
+    return {
+      date: base.slice(0, 10),
+      close: Number(item.closePrice ?? item.close ?? item.value),
+    };
+  }).filter((item) => item.date && Number.isFinite(item.close))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
+function extractYahooQuoteNewsItems(state) {
+  const updatedAt = normalizeNewsDate(state?.symbolTopics?.updatedAtDateTime || state?.pageInfo?.currentDateTime || "");
+  const sources = (Array.isArray(state?.symbolTopics?.topics) ? state.symbolTopics.topics : [])
+    .flatMap((topic) => Array.isArray(topic?.sources) ? topic.sources : []);
+  const unique = new Map();
+  for (const source of sources) {
+    const link = String(source?.url || "").trim();
+    const title = String(source?.title || "").replace(/^ニュース\s*-\s*/, "").trim();
+    if (!link || !title || unique.has(link)) continue;
+    unique.set(link, {
+      title,
+      link,
+      source: extractYahooSourceLabel(source?.note),
+      published_at: updatedAt,
+    });
+  }
+  return [...unique.values()].slice(0, 10);
+}
+
+function extractYahooSourceLabel(note) {
+  const value = String(note || "").trim();
+  const match = value.match(/（(.+?)）/);
+  if (match) return match[1];
+  return value || "Yahoo!ファイナンス";
+}
+
+function extractYahooQuoteNextEarningsDate(state) {
+  const message = String(state?.mainStocksPressReleaseSchedule?.pressReleaseScheduleMessage || "").trim();
+  const match = message.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})\D*/);
+  if (!match) return "";
+  return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+}
+
+function mergeCalendarEntries(items, nextEarningsDate, company, input) {
+  const rows = Array.isArray(items) ? [...items] : [];
+  if (nextEarningsDate && !rows.some((item) => String(item.date || item.announcement_date || "") === nextEarningsDate)) {
+    rows.push({
+      date: nextEarningsDate,
+      code: company?.sec_code || input?.secCode || "",
+      company: company?.name || input?.name || "",
+      label: "next-earnings",
+      fiscal_end: company?.fiscal_year_end || "",
+    });
+  }
+  return rows;
 }
 
 function renderFinancialChart(rowsInput, metric, mode) {
@@ -2116,9 +2214,7 @@ function inferFiscalYearFromQuarter(item) {
 
 function displayFiscalYear(item) {
   const raw = Number(item.fiscal_year || 0);
-  if (!raw) return 0;
-  const endMonth = Number(item.fiscal_year_end_month || 3);
-  return raw + (endMonth === 12 ? 0 : 1);
+  return raw || 0;
 }
 
 function normalizeNewsDate(value) {

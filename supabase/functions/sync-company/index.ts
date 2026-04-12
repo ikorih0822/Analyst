@@ -30,11 +30,17 @@ Deno.serve(async (request) => {
       fetchPayload(`https://edinetdb.jp/v1/companies/${edinetCode}/earnings?limit=20`, headers),
     ]);
     const company = extractData(companyPayload) || {};
-    const calendarItems = await fetchCalendar(headers, company?.sec_code || body.secCode || "");
     const ticker = toYahooTicker(company?.sec_code || body.secCode || "");
+    const yahooQuote = ticker ? await fetchYahooQuoteSnapshot(ticker) : null;
+    const calendarItems = mergeCalendarItems(
+      await fetchCalendar(headers, company?.sec_code || body.secCode || ""),
+      yahooQuote?.nextEarningsDate || "",
+      company,
+      body,
+    );
     const [priceSeries, newsItems] = await Promise.all([
-      ticker ? fetchYahooPriceSeries(ticker) : Promise.resolve([]),
-      fetchRelatedNews(company.name || body.name || "", ticker),
+      ticker ? fetchYahooPriceSeries(ticker, yahooQuote) : Promise.resolve([]),
+      fetchRelatedNews(company.name || body.name || "", ticker, yahooQuote),
     ]);
 
     return jsonResponse({
@@ -103,7 +109,9 @@ function normalizeTdnet(payload: any) {
   return [];
 }
 
-async function fetchYahooPriceSeries(ticker: string) {
+async function fetchYahooPriceSeries(ticker: string, yahooQuote: Record<string, unknown> | null = null) {
+  const quoteSeries = Array.isArray(yahooQuote?.priceSeries) ? yahooQuote.priceSeries : [];
+  if (quoteSeries.length) return quoteSeries;
   const headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36",
     "Accept": "application/json,text/plain,*/*",
@@ -149,10 +157,12 @@ async function fetchYahooPriceSeries(ticker: string) {
   return [];
 }
 
-async function fetchRelatedNews(companyName: string, ticker: string) {
-  const yahooNews = await fetchYahooNewsItems(ticker);
-  if (yahooNews.length) return yahooNews;
-  return fetchGoogleNewsItems(companyName, ticker);
+async function fetchRelatedNews(companyName: string, ticker: string, yahooQuote: Record<string, unknown> | null = null) {
+  const quoteNews = Array.isArray(yahooQuote?.newsItems) ? yahooQuote.newsItems : [];
+  if (quoteNews.length) return quoteNews;
+  const googleNews = await fetchGoogleNewsItems(companyName, ticker);
+  if (googleNews.length) return googleNews;
+  return fetchYahooNewsItems(ticker);
 }
 
 async function fetchYahooNewsItems(ticker: string) {
@@ -223,6 +233,104 @@ async function fetchCalendar(headers: Record<string, string>, secCode: string) {
   } catch {
     return [];
   }
+}
+
+async function fetchYahooQuoteSnapshot(ticker: string) {
+  try {
+    const response = await fetch(`https://finance.yahoo.co.jp/quote/${encodeURIComponent(ticker)}`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+      },
+    });
+    if (!response.ok) return null;
+    const html = await response.text();
+    const state = extractYahooPreloadedState(html);
+    if (!state) return null;
+    return {
+      priceSeries: extractYahooPriceSeriesFromState(state),
+      newsItems: extractYahooNewsItemsFromState(state),
+      nextEarningsDate: extractYahooNextEarningsDate(state),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function extractYahooPreloadedState(html: string) {
+  const match = html.match(/window\.__PRELOADED_STATE__\s*=\s*(\{.*?\})\s*;\s*<\/script>/s);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+function extractYahooPriceSeriesFromState(state: any) {
+  const histories = Array.isArray(state?.mainItemDetailChartSetting?.timeSeriesData?.histories)
+    ? state.mainItemDetailChartSetting.timeSeriesData.histories
+    : Array.isArray(state?.mainYJChart?.chartInfo?.data)
+      ? state.mainYJChart.chartInfo.data
+      : [];
+  return histories.map((item: any) => ({
+    date: String(item.baseDatetime || item.date || "").slice(0, 10),
+    close: Number(item.closePrice ?? item.close ?? item.value),
+  })).filter((item: { date: string; close: number }) => item.date && Number.isFinite(item.close));
+}
+
+function extractYahooNewsItemsFromState(state: any) {
+  const updatedAt = normalizeDateTime(state?.symbolTopics?.updatedAtDateTime || state?.pageInfo?.currentDateTime || "");
+  const topics = Array.isArray(state?.symbolTopics?.topics) ? state.symbolTopics.topics : [];
+  const unique = new Map<string, { title: string; link: string; source: string; published_at: string }>();
+  for (const topic of topics) {
+    for (const source of Array.isArray(topic?.sources) ? topic.sources : []) {
+      const link = String(source?.url || "").trim();
+      const title = String(source?.title || "").replace(/^ニュース\s*-\s*/, "").trim();
+      if (!link || !title || unique.has(link)) continue;
+      unique.set(link, {
+        title,
+        link,
+        source: extractYahooSourceLabel(source?.note),
+        published_at: updatedAt,
+      });
+    }
+  }
+  return [...unique.values()].slice(0, 10);
+}
+
+function extractYahooNextEarningsDate(state: any) {
+  const message = String(state?.mainStocksPressReleaseSchedule?.pressReleaseScheduleMessage || "").trim();
+  const match = message.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+  if (!match) return "";
+  return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+}
+
+function extractYahooSourceLabel(note: string) {
+  const value = String(note || "").trim();
+  const match = value.match(/（(.+?)）/);
+  if (match) return match[1];
+  return value || "Yahoo!ファイナンス";
+}
+
+function normalizeDateTime(value: string) {
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.valueOf()) ? parsed.toISOString() : "";
+}
+
+function mergeCalendarItems(items: any[], nextEarningsDate: string, company: any, body: Record<string, string>) {
+  const rows = Array.isArray(items) ? [...items] : [];
+  if (nextEarningsDate && !rows.some((item) => String(item.date || item.announcement_date || "") === nextEarningsDate)) {
+    rows.push({
+      date: nextEarningsDate,
+      code: company?.sec_code || body.secCode || "",
+      company: company?.name || body.name || "",
+      label: "次回決算予定",
+      fiscal_end: company?.fiscal_year_end || "",
+    });
+  }
+  return rows;
 }
 
 function jsonResponse(payload: unknown, status = 200) {

@@ -574,13 +574,12 @@ th {
   }
 
   .topbar {
-    position: sticky;
-    top: 0.75rem;
-    z-index: 10;
+    position: static;
   }
 
   .topbar-actions {
     width: 100%;
+    flex-wrap: wrap;
     justify-content: flex-start;
   }
 
