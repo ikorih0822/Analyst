@@ -463,6 +463,24 @@ th {
   margin-bottom: 0.35rem;
 }
 
+.earnings-subtabs {
+  justify-content: flex-start;
+}
+
+.chart-tooltip {
+  position: fixed;
+  z-index: 90;
+  max-width: min(280px, calc(100vw - 2rem));
+  padding: 0.55rem 0.75rem;
+  border-radius: 12px;
+  background: rgba(20, 23, 22, 0.92);
+  color: #fffaf5;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  pointer-events: none;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.24);
+}
+
 .inline-link {
   color: var(--accent-strong);
   text-decoration: none;

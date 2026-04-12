@@ -34,6 +34,7 @@ const state = {
   importLoading: false,
   companySearch: "",
   statusFilter: "all",
+  hoverTooltip: null,
 };
 
 const el = {
@@ -157,6 +158,12 @@ function wireEvents() {
       renderWorkspace();
       return;
     }
+    if (type === "set-earnings-view") {
+      state.ui.earningsView = action.dataset.view || "quarterly";
+      saveUiState();
+      renderWorkspace();
+      return;
+    }
     if (type === "delete-forecast") {
       await deleteForecast(action.dataset.id || "");
       return;
@@ -190,6 +197,17 @@ function wireEvents() {
     if (formType === "note") await saveNoteForm(form);
     if (formType === "question") await saveQuestionForm(form);
   });
+
+  document.addEventListener("pointermove", (event) => {
+    const point = event.target.closest("[data-point-tooltip]");
+    if (!point) {
+      hideHoverTooltip();
+      return;
+    }
+    showHoverTooltip(point.dataset.pointTooltip || "", event.clientX, event.clientY);
+  });
+  document.addEventListener("pointerdown", hideHoverTooltip);
+  document.addEventListener("scroll", hideHoverTooltip, true);
 }
 
 async function initSupabase() {
@@ -445,50 +463,45 @@ function renderOverview(company) {
 }
 
 function renderEarnings(company) {
-  const buckets = buildQuarterBuckets(company);
-  const selectedBucket = getSelectedQuarterBucket(company, buckets);
+  const earningsView = state.ui.earningsView || "quarterly";
+  const quarterBuckets = buildQuarterBuckets(company);
+  const annualRows = buildAnnualRows(company);
+  const selectedBucket = getSelectedQuarterBucket(company, quarterBuckets);
   const defaults = inferNextForecastPeriod(company);
+  const nextSchedule = getNextEarningsSchedule(company);
+  const latestCompanyForecast = getLatestCompanyForecast(company);
   return `
     <div class="panel-grid">
       <section class="panel full">
-        <div class="row-between"><h3>四半期推移</h3><span class="dim">実績は EDINET DB、予想は手入力です。</span></div>
-        <div class="chart-grid">
-          <article class="mini-chart-card"><div class="chart-head"><strong>売上高</strong><span class="dim">百万円</span></div>${renderQuarterlyChart(buckets, "revenue")}</article>
-          <article class="mini-chart-card"><div class="chart-head"><strong>営業利益</strong><span class="dim">百万円</span></div>${renderQuarterlyChart(buckets, "operating_income")}</article>
-          <article class="mini-chart-card"><div class="chart-head"><strong>EPS</strong><span class="dim">円</span></div>${renderQuarterlyChart(buckets, "eps")}</article>
+        <div class="row-between">
+          <h3>決算データ</h3>
+          <div class="button-row earnings-subtabs">
+            <button class="${earningsView === "quarterly" ? "" : "ghost"} tiny" data-action="set-earnings-view" data-view="quarterly" type="button">四半期</button>
+            <button class="${earningsView === "annual" ? "" : "ghost"} tiny" data-action="set-earnings-view" data-view="annual" type="button">通期</button>
+          </div>
         </div>
       </section>
+      ${nextSchedule || latestCompanyForecast ? `
+        <section class="panel">
+          <h3>今後の予定・会社予想</h3>
+          <div class="timeline">
+            ${nextSchedule ? renderSummaryCard("次回決算予定", `${formatDate(nextSchedule.date)}${nextSchedule.label ? ` / ${nextSchedule.label}` : ""}`) : ""}
+            ${latestCompanyForecast ? renderSummaryCard("会社予想 売上高", formatMillionsFromMn(latestCompanyForecast.revenue)) : ""}
+            ${latestCompanyForecast ? renderSummaryCard("会社予想 営業利益", formatMillionsFromMn(latestCompanyForecast.operating_income)) : ""}
+            ${latestCompanyForecast ? renderSummaryCard("会社予想 EPS", formatYen(latestCompanyForecast.eps)) : ""}
+          </div>
+          ${latestCompanyForecast?.source ? `<p class="help-text">予想ソース: ${escapeHtml(latestCompanyForecast.source)}</p>` : ""}
+        </section>
+      ` : ""}
       <section class="panel full">
-        <h3>四半期実績・予想一覧</h3>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>期</th>
-                <th>売上高</th>
-                <th>営業利益</th>
-                <th>当期利益</th>
-                <th>EPS</th>
-                <th>更新</th>
-                <th>資料</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${buckets.length ? buckets.map((bucket) => `
-                <tr class="${selectedBucket?.key === bucket.key ? "selected-row" : ""}">
-                  <td><button class="ghost tiny" data-action="select-quarter" data-quarter-key="${escapeHtml(bucket.key)}" type="button">${escapeHtml(bucket.label)}</button><div class="table-subline">${renderBadges(bucket)}</div></td>
-                  <td>${renderMetricPair(bucket.actual?.revenue, bucket.forecast?.revenue_mn, formatMillions, true)}</td>
-                  <td>${renderMetricPair(bucket.actual?.operating_income, bucket.forecast?.operating_income_mn, formatMillions, true)}</td>
-                  <td>${renderMetricPair(bucket.actual?.net_income, bucket.forecast?.net_income_mn, formatMillions, true)}</td>
-                  <td>${renderMetricPair(bucket.actual?.eps, bucket.forecast?.eps, (value) => `${formatNumber(value)} 円`, false)}</td>
-                  <td>${escapeHtml(formatQuarterUpdate(bucket))}</td>
-                  <td>${renderQuarterLinkSummary(company, bucket)}</td>
-                </tr>
-              `).join("") : `<tr><td colspan="7"><div class="empty">四半期データがありません。</div></td></tr>`}
-            </tbody>
-          </table>
+        <div class="row-between"><h3>${earningsView === "quarterly" ? "四半期推移" : "通期推移"}</h3><span class="dim">最新は TDNet、履歴は Yuho を補完して表示します。</span></div>
+        <div class="chart-grid">
+          <article class="mini-chart-card"><div class="chart-head"><strong>売上高</strong><span class="dim">${earningsView === "quarterly" ? "百万円 / 単四" : "百万円 / 通期"}</span></div>${renderFinancialChart(earningsView === "quarterly" ? quarterBuckets : annualRows, "revenue", earningsView)}</article>
+          <article class="mini-chart-card"><div class="chart-head"><strong>営業利益</strong><span class="dim">${earningsView === "quarterly" ? "百万円 / 単四" : "百万円 / 通期"}</span></div>${renderFinancialChart(earningsView === "quarterly" ? quarterBuckets : annualRows, "operating_income", earningsView)}</article>
+          <article class="mini-chart-card"><div class="chart-head"><strong>EPS</strong><span class="dim">円</span></div>${renderFinancialChart(earningsView === "quarterly" ? quarterBuckets : annualRows, "eps", earningsView)}</article>
         </div>
       </section>
+      ${earningsView === "quarterly" ? renderQuarterlyEarningsSection(company, quarterBuckets, selectedBucket) : renderAnnualEarningsSection(company, annualRows)}
       <section class="panel">
         <h3>次回予想を登録</h3>
         <form data-form="forecast" class="stack">
@@ -524,6 +537,7 @@ function renderValuation(company) {
   const change = Number.isFinite(latestPrice) && Number.isFinite(firstPrice) && firstPrice !== 0 ? ((latestPrice - firstPrice) / firstPrice) * 100 : null;
   const roughPer = Number.isFinite(latestPrice) && Number.isFinite(latestAnnual?.eps) && latestAnnual.eps !== 0 ? latestPrice / latestAnnual.eps : null;
   const priceError = company.external_snapshot.fetch_status?.price_error || "";
+  const valuationSnapshot = extractValuationSnapshot(company);
   return `
     <div class="panel-grid">
       <section class="panel">
@@ -549,6 +563,21 @@ function renderValuation(company) {
           <strong>株価をまだ取得できていません</strong>
           <p class="dim">${escapeHtml(priceError || "EDINET 再同期で Edge Function 経由の株価取得を試します。")}</p>
         `}
+      </section>
+      <section class="panel">
+        <h3>EDINET DB バリュエーション</h3>
+        <div class="timeline">
+          ${renderSummaryCard("PER", valuationSnapshot.per)}
+          ${renderSummaryCard("PBR", valuationSnapshot.pbr)}
+          ${renderSummaryCard("EV/EBITDA", valuationSnapshot.evEbitda)}
+          ${renderSummaryCard("配当利回り", valuationSnapshot.dividendYield)}
+          ${renderSummaryCard("時価総額", valuationSnapshot.marketCap)}
+          ${renderSummaryCard("EV", valuationSnapshot.enterpriseValue)}
+        </div>
+      </section>
+      <section class="panel full">
+        <h3>バリュエーション推移</h3>
+        ${renderValuationHistoryTable(company.external_snapshot.ratios)}
       </section>
       <section class="panel full">
         <div class="row-between"><h3>関連ニュース</h3><span class="dim">最新順</span></div>
@@ -635,6 +664,7 @@ function renderAutoData(company) {
           ${renderSummaryCard("四半期件数", String(snapshot.quarterly_financials.length))}
           ${renderSummaryCard("TDNet 件数", String(snapshot.tdnet_earnings.length))}
           ${renderSummaryCard("ニュース件数", String(snapshot.news_items.length))}
+          ${renderSummaryCard("決算予定件数", String(snapshot.earnings_calendar.length))}
           ${renderSummaryCard("株価系列数", String(snapshot.price_series.length))}
           ${renderSummaryCard("最終同期", formatDateTime(snapshot.synced_at))}
         </div>
@@ -933,18 +963,50 @@ function exportCompanies() {
 
 function buildQuarterBuckets(company) {
   const map = new Map();
+  const cumulativeMap = new Map();
+  const annualMap = new Map();
+
   for (const item of company.external_snapshot.quarterly_financials) {
+    if (!Number.isFinite(item.quarter) || item.quarter < 1 || item.quarter > 3) continue;
     const key = quarterKey(item);
-    map.set(key, { ...(map.get(key) || makeQuarterBucket(item)), actual: item });
+    cumulativeMap.set(key, item);
   }
+
+  for (const item of company.external_snapshot.tdnet_earnings) {
+    if (!Number.isFinite(item.quarter)) continue;
+    const existing = Number.isFinite(item.quarter) && item.quarter >= 1 && item.quarter <= 3 ? cumulativeMap.get(quarterKey(item)) : annualMap.get(annualKey(item));
+    if (item.quarter >= 1 && item.quarter <= 3) {
+      cumulativeMap.set(quarterKey(item), chooseLaterDisclosure(existing, item));
+    } else if (item.quarter === 4) {
+      annualMap.set(annualKey(item), chooseLaterDisclosure(existing, item));
+    }
+  }
+
+  for (const item of company.external_snapshot.annual_financials) {
+    const key = annualKey(item);
+    if (!annualMap.has(key)) annualMap.set(key, item);
+  }
+
+  for (const cumulative of cumulativeMap.values()) {
+    const prev = cumulative.quarter > 1
+      ? cumulativeMap.get(quarterKey({ fiscal_year: cumulative.fiscal_year, fiscal_year_end_month: cumulative.fiscal_year_end_month, quarter: cumulative.quarter - 1 }))
+      : null;
+    const annual = annualMap.get(annualKey(cumulative));
+    const standalone = convertToStandaloneQuarter(cumulative, prev, annual);
+    const key = quarterKey(standalone);
+    map.set(key, {
+      ...(map.get(key) || makeQuarterBucket(standalone)),
+      actual: standalone,
+      source_actual: cumulative,
+      tdnet: cumulative.source_type === "tdnet" ? cumulative : map.get(key)?.tdnet || null,
+    });
+  }
+
   for (const item of company.manual_forecast) {
     const key = quarterKey(item);
     map.set(key, { ...(map.get(key) || makeQuarterBucket(item)), forecast: item });
   }
-  for (const item of company.external_snapshot.tdnet_earnings) {
-    const key = quarterKey(item);
-    map.set(key, { ...(map.get(key) || makeQuarterBucket(item)), tdnet: item });
-  }
+
   return [...map.values()].map((item) => ({ ...item, label: quarterLabel(item) })).sort(compareQuarterDesc);
 }
 
@@ -955,9 +1017,220 @@ function makeQuarterBucket(item) {
     fiscal_year_end_month: Number(item.fiscal_year_end_month || 3),
     quarter: Number(item.quarter || 0),
     actual: null,
+    source_actual: null,
     forecast: null,
     tdnet: null,
   };
+}
+
+function buildAnnualRows(company) {
+  const map = new Map();
+  for (const item of company.external_snapshot.annual_financials) {
+    const key = annualKey(item);
+    map.set(key, {
+      key,
+      fiscal_year: Number(item.fiscal_year || 0),
+      fiscal_year_end_month: Number(item.fiscal_year_end_month || inferFiscalYearEndMonth(company.external_snapshot.company)),
+      actual: item,
+      tdnet: null,
+      forecast: null,
+      label: annualLabel(item),
+      updated_at: item.submit_date || item.updated_at || "",
+    });
+  }
+  for (const item of company.external_snapshot.tdnet_earnings.filter((entry) => entry.quarter === 4)) {
+    const key = annualKey(item);
+    const existing = map.get(key);
+    map.set(key, {
+      key,
+      fiscal_year: Number(item.fiscal_year || 0),
+      fiscal_year_end_month: Number(item.fiscal_year_end_month || inferFiscalYearEndMonth(company.external_snapshot.company)),
+      actual: chooseLaterDisclosure(existing?.actual, item),
+      tdnet: item,
+      forecast: extractCompanyForecast(item),
+      label: annualLabel(item),
+      updated_at: item.disclosure_date || existing?.updated_at || "",
+    });
+  }
+  for (const item of company.external_snapshot.tdnet_earnings.filter((entry) => entry.quarter >= 1 && entry.quarter <= 3)) {
+    const key = annualKey(item);
+    const existing = map.get(key) || {
+      key,
+      fiscal_year: Number(item.fiscal_year || 0),
+      fiscal_year_end_month: Number(item.fiscal_year_end_month || inferFiscalYearEndMonth(company.external_snapshot.company)),
+      actual: null,
+      tdnet: null,
+      forecast: null,
+      label: annualLabel(item),
+      updated_at: "",
+    };
+    map.set(key, {
+      ...existing,
+      forecast: extractCompanyForecast(item) || existing.forecast,
+      tdnet: chooseLaterDisclosure(existing.tdnet, item),
+      updated_at: item.disclosure_date || existing.updated_at,
+    });
+  }
+  return [...map.values()].sort((left, right) => compareQuarterDesc({ ...left, quarter: 4 }, { ...right, quarter: 4 }));
+}
+
+function renderQuarterlyEarningsSection(company, buckets, selectedBucket) {
+  return `
+    <section class="panel full">
+      <h3>四半期実績・予想一覧</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>期</th>
+              <th>売上高</th>
+              <th>営業利益</th>
+              <th>当期利益</th>
+              <th>EPS</th>
+              <th>更新</th>
+              <th>資料</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${buckets.length ? buckets.map((bucket) => `
+              <tr class="${selectedBucket?.key === bucket.key ? "selected-row" : ""}">
+                <td><button class="ghost tiny" data-action="select-quarter" data-quarter-key="${escapeHtml(bucket.key)}" type="button">${escapeHtml(bucket.label)}</button><div class="table-subline">${renderBadges(bucket)}</div></td>
+                <td>${renderMetricPair(bucket.actual, "revenue", bucket.forecast?.revenue_mn, true)}</td>
+                <td>${renderMetricPair(bucket.actual, "operating_income", bucket.forecast?.operating_income_mn, true)}</td>
+                <td>${renderMetricPair(bucket.actual, "net_income", bucket.forecast?.net_income_mn, true)}</td>
+                <td>${renderMetricPair(bucket.actual, "eps", bucket.forecast?.eps, false)}</td>
+                <td>${escapeHtml(formatQuarterUpdate(bucket))}</td>
+                <td>${renderQuarterLinkSummary(company, bucket)}</td>
+              </tr>
+            `).join("") : `<tr><td colspan="7"><div class="empty">四半期データがありません。</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderAnnualEarningsSection(company, annualRows) {
+  return `
+    <section class="panel full">
+      <h3>通期実績・会社予想</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>期</th>
+              <th>売上高</th>
+              <th>営業利益</th>
+              <th>当期利益</th>
+              <th>EPS</th>
+              <th>更新</th>
+              <th>資料</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${annualRows.length ? annualRows.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.label)}<div class="table-subline">${row.actual ? `<span class="badge badge-actual">実績</span>` : ""}${row.forecast ? `<span class="badge badge-forecast">会社予想</span>` : ""}</div></td>
+                <td>${renderMetricPair(row.actual, "revenue", row.forecast?.revenue, false)}</td>
+                <td>${renderMetricPair(row.actual, "operating_income", row.forecast?.operating_income, false)}</td>
+                <td>${renderMetricPair(row.actual, "net_income", row.forecast?.net_income, false)}</td>
+                <td>${renderMetricPair(row.actual, "eps", row.forecast?.eps, false)}</td>
+                <td>${escapeHtml(formatDate(row.updated_at))}</td>
+                <td>${renderAnnualLinkSummary(company, row)}</td>
+              </tr>
+            `).join("") : `<tr><td colspan="7"><div class="empty">通期データがありません。</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function getLatestCompanyForecast(company) {
+  const earnings = [...company.external_snapshot.tdnet_earnings].sort((left, right) => String(right.disclosure_date || "").localeCompare(String(left.disclosure_date || "")));
+  for (const item of earnings) {
+    const forecast = extractCompanyForecast(item);
+    if (forecast) {
+      return {
+        ...forecast,
+        fiscal_year: item.fiscal_year,
+        label: annualLabel(item),
+        source: `${item.disclosure_date ? formatDate(item.disclosure_date) : "-"} 開示`,
+      };
+    }
+  }
+  return null;
+}
+
+function getNextEarningsSchedule(company) {
+  const schedules = Array.isArray(company.external_snapshot?.earnings_calendar) ? company.external_snapshot.earnings_calendar : [];
+  const todayValue = today();
+  return schedules
+    .filter((item) => String(item.date || "") >= todayValue)
+    .sort((left, right) => String(left.date || "").localeCompare(String(right.date || "")))[0] || null;
+}
+
+function convertToStandaloneQuarter(current, previous, annual) {
+  return {
+    ...current,
+    revenue: computeStandaloneMetric(current.revenue, previous?.revenue, current.quarter, annual?.revenue),
+    operating_income: computeStandaloneMetric(current.operating_income, previous?.operating_income, current.quarter, annual?.operating_income),
+    ordinary_income: computeStandaloneMetric(current.ordinary_income, previous?.ordinary_income, current.quarter, annual?.ordinary_income),
+    net_income: computeStandaloneMetric(current.net_income, previous?.net_income, current.quarter, annual?.net_income),
+    eps: computeStandaloneMetric(current.eps, previous?.eps, current.quarter, annual?.eps),
+  };
+}
+
+function computeStandaloneMetric(currentValue, previousValue, quarter, annualValue) {
+  const current = Number(currentValue);
+  if (!Number.isFinite(current)) return null;
+  if (quarter === 1) return current;
+  if (quarter === 4) {
+    const annual = Number(annualValue);
+    const previous = Number(previousValue);
+    if (Number.isFinite(annual) && Number.isFinite(previous)) return annual - previous;
+    return Number.isFinite(annual) ? annual : null;
+  }
+  const previous = Number(previousValue);
+  return Number.isFinite(previous) ? current - previous : current;
+}
+
+function chooseLaterDisclosure(existing, candidate) {
+  if (!existing) return candidate;
+  const existingDate = String(existing.disclosure_date || existing.submit_date || existing.updated_at || "");
+  const candidateDate = String(candidate.disclosure_date || candidate.submit_date || candidate.updated_at || "");
+  return candidateDate >= existingDate ? candidate : existing;
+}
+
+function extractCompanyForecast(item) {
+  const revenue = findForecastField(item, ["forecast_revenue", "revenue_forecast", "next_revenue", "company_forecast_revenue", "forecast_sales", "sales_forecast"]);
+  const operatingIncome = findForecastField(item, ["forecast_operating_income", "operating_income_forecast", "next_operating_income", "company_forecast_operating_income"]);
+  const netIncome = findForecastField(item, ["forecast_net_income", "net_income_forecast", "next_net_income", "company_forecast_net_income"]);
+  const eps = findForecastField(item, ["forecast_eps", "eps_forecast", "next_eps", "company_forecast_eps"]);
+  if (![revenue, operatingIncome, netIncome, eps].some((value) => Number.isFinite(Number(value)))) return null;
+  return {
+    revenue: toNumberOrNull(revenue),
+    operating_income: toNumberOrNull(operatingIncome),
+    net_income: toNumberOrNull(netIncome),
+    eps: toNumberOrNull(eps),
+  };
+}
+
+function findForecastField(item, exactKeys) {
+  for (const key of exactKeys) {
+    if (item[key] !== undefined && item[key] !== null && String(item[key]) !== "") return item[key];
+  }
+  const lowered = Object.keys(item).map((key) => ({ key, lower: key.toLowerCase() }));
+  const fuzzy = lowered.find((entry) => entry.lower.includes("forecast") && exactKeys.some((key) => entry.lower.includes(key.replace("forecast_", "").replace("company_", "").replace("next_", ""))));
+  return fuzzy ? item[fuzzy.key] : null;
+}
+
+function annualKey(item) {
+  return `${Number(item.fiscal_year || 0)}-${Number(item.fiscal_year_end_month || 3)}`;
+}
+
+function annualLabel(item) {
+  return `${Number(item.fiscal_year || 0)}/${Number(item.fiscal_year_end_month || 3)}月期`;
 }
 
 function getSelectedQuarterBucket(company, buckets) {
@@ -1010,6 +1283,9 @@ function normalizeCompanyRow(row) {
 function buildCompanyFromExternal(payload, existing = null) {
   const normalized = normalizeExternalPayload(payload);
   const company = normalized.company || {};
+  const nextSchedule = normalized.earnings_calendar
+    .filter((item) => item.date >= today())
+    .sort((left, right) => String(left.date).localeCompare(String(right.date)))[0];
   return {
     user_id: state.session.user.id,
     sec_code: company.sec_code ? String(company.sec_code).slice(0, 4) : existing?.sec_code || null,
@@ -1017,7 +1293,7 @@ function buildCompanyFromExternal(payload, existing = null) {
     name: company.name || existing?.name || "",
     industry: company.industry || existing?.industry || null,
     status: existing?.status || "追跡",
-    next_earnings: existing?.next_earnings || null,
+    next_earnings: nextSchedule?.date || existing?.next_earnings || null,
     thesis: existing?.thesis || "",
     variant_view: existing?.variant_view || "",
     key_debate: existing?.key_debate || "",
@@ -1041,6 +1317,7 @@ function normalizeExternalPayload(payload) {
     tdnet_earnings: normalizeTdnetEarnings(payload?.tdnet_earnings),
     price_series: normalizePriceSeries(payload?.price_series),
     news_items: normalizeNewsItems(payload?.news_items),
+    earnings_calendar: normalizeEarningsCalendar(payload?.earnings_calendar),
     fetch_status: payload?.fetch_status || {},
     rights: { ...defaultRights(), ...(payload?.rights || {}) },
     synced_at: payload?.synced_at || null,
@@ -1053,7 +1330,8 @@ function normalizeQuarterlyFinancials(rows, company) {
     ...item,
     fiscal_year: Number(item.fiscal_year || getFiscalYearFromEnd(item.fiscal_year_end) || 0),
     fiscal_year_end_month: Number(item.fiscal_year_end_month || getMonthFromDate(item.fiscal_year_end) || endMonth || 3),
-    quarter: Number(item.quarter || 0),
+    quarter: parseQuarter(item.quarter),
+    source_type: "yuho",
   })).sort(compareQuarterDesc);
 }
 
@@ -1067,10 +1345,13 @@ function normalizeTdnetEarnings(payload) {
         : [];
   return rows.map((item) => ({
     ...item,
-    fiscal_year: Number(item.fiscal_year || getFiscalYearFromEnd(item.fiscal_year_end) || 0),
+    fiscal_year: Number(item.fiscal_year || getFiscalYearFromEnd(item.fiscal_year_end) || inferFiscalYearFromQuarter(item) || 0),
     fiscal_year_end_month: Number(item.fiscal_year_end_month || getMonthFromDate(item.fiscal_year_end) || 3),
-    quarter: Number(item.quarter || 0),
-  })).sort(compareQuarterDesc);
+    quarter: parseQuarter(item.quarter),
+    source_type: "tdnet",
+  }))
+    .filter((item) => Number.isFinite(item.quarter) && item.quarter > 0 && item.fiscal_year > 0)
+    .sort(compareQuarterDesc);
 }
 
 function normalizeManualForecasts(raw, snapshot) {
@@ -1130,6 +1411,16 @@ function normalizeNewsItems(items) {
   })).filter((item) => item.title && item.link).sort((a, b) => String(b.published_at).localeCompare(String(a.published_at)));
 }
 
+function normalizeEarningsCalendar(items) {
+  return (Array.isArray(items) ? items : []).map((item) => ({
+    date: String(item.date || item.announcement_date || ""),
+    code: String(item.code || item.sec_code || ""),
+    company: String(item.company || item.name || ""),
+    label: String(item.type || item.period_type || item.quarter || ""),
+    fiscal_end: String(item.fiscal_end || item.fiscal_year_end || ""),
+  })).filter((item) => item.date);
+}
+
 function normalizeDescendingDateArray(rows, selector = null) {
   return [...rows].sort((a, b) => {
     const left = selector ? selector(a) : guessSortValue(a);
@@ -1161,6 +1452,7 @@ async function fetchExternalData(input) {
     fetchEdinetPayload(`https://edinetdb.jp/v1/companies/${edinetCode}/earnings?limit=20`, headers),
   ]);
   const company = extractEdinetData(companyRaw) || {};
+  const calendarRaw = await fetchEdinetCalendar(headers, company?.sec_code || input.secCode || "");
   const ticker = toYahooTicker(company?.sec_code || input.secCode || "");
   const [priceSeries, newsItems] = await Promise.all([
     fetchYahooPriceSeries(ticker),
@@ -1175,6 +1467,7 @@ async function fetchExternalData(input) {
     tdnet_earnings: normalizeTdnetEarnings(earningsRaw),
     price_series: priceSeries,
     news_items: newsItems,
+    earnings_calendar: extractEdinetArray(calendarRaw),
     fetch_status: {
       mode: "browser-fallback",
       used_function: false,
@@ -1192,7 +1485,23 @@ async function tryFetchViaSupabaseFunction(input) {
     if (error) throw error;
     return data || null;
   } catch {
-    return null;
+    try {
+      const accessToken = state.session?.access_token;
+      if (!accessToken) return null;
+      const response = await fetch(`${state.config.supabaseUrl}/functions/v1/sync-company`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: state.config.supabaseAnonKey,
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ ...input, edinetApiKey: state.config.edinetApiKey }),
+      });
+      if (!response.ok) return null;
+      return await response.json();
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -1210,6 +1519,20 @@ async function fetchEdinetPayload(url, headers) {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload?.error?.message || `EDINET request failed: ${url}`);
   return payload;
+}
+
+async function fetchEdinetCalendar(headers, secCode) {
+  const code = String(secCode || "").replace(/\D/g, "").slice(0, 4);
+  if (!code) return [];
+  const from = today();
+  const to = offsetDate(180);
+  try {
+    const payload = await fetchEdinetPayload(`https://edinetdb.jp/v1/calendar?from=${from}&to=${to}`, headers);
+    const rows = extractEdinetArray(payload);
+    return rows.filter((item) => String(item.code || item.sec_code || "").replace(/\D/g, "").startsWith(code));
+  } catch {
+    return [];
+  }
 }
 
 function extractEdinetData(payload) {
@@ -1258,9 +1581,9 @@ async function fetchGoogleNewsItems(companyName, ticker) {
   }
 }
 
-function renderQuarterlyChart(buckets, metric) {
-  const rows = [...buckets].slice(0, 12).reverse();
-  const values = rows.flatMap((item) => [getBucketMetric(item, metric, true), getBucketMetric(item, metric, false)]).filter(Number.isFinite);
+function renderFinancialChart(rowsInput, metric, mode) {
+  const rows = [...rowsInput].slice(0, 12).reverse();
+  const values = rows.flatMap((item) => [getRowMetric(item, metric, true, mode), getRowMetric(item, metric, false, mode)]).filter(Number.isFinite);
   if (!values.length) return `<div class="summary-card">表示できるデータがありません。</div>`;
   const width = 720;
   const height = 220;
@@ -1271,8 +1594,8 @@ function renderQuarterlyChart(buckets, metric) {
   const coords = rows.map((item, index) => ({
     x: padding + ((width - padding * 2) * index) / Math.max(rows.length - 1, 1),
     label: item.label,
-    actual: getBucketMetric(item, metric, true),
-    forecast: getBucketMetric(item, metric, false),
+    actual: getRowMetric(item, metric, true, mode),
+    forecast: getRowMetric(item, metric, false, mode),
   }));
   const actualPoints = coords.filter((item) => Number.isFinite(item.actual)).map((item) => `${item.x},${chartY(item.actual, min, range, height, padding)}`).join(" ");
   const forecastPoints = coords.filter((item) => Number.isFinite(item.forecast)).map((item) => `${item.x},${chartY(item.forecast, min, range, height, padding)}`).join(" ");
@@ -1283,7 +1606,7 @@ function renderQuarterlyChart(buckets, metric) {
       <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="rgba(67,52,31,0.18)"></line>
       ${actualPoints ? `<polyline fill="none" stroke="#0d5b52" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${actualPoints}"></polyline>` : ""}
       ${forecastPoints ? `<polyline fill="none" stroke="#b87512" stroke-width="3" stroke-dasharray="8 6" stroke-linecap="round" stroke-linejoin="round" points="${forecastPoints}"></polyline>` : ""}
-      ${coords.map((item) => renderChartPoint(item, min, range, height, padding)).join("")}
+      ${coords.map((item) => renderChartPoint(item, min, range, height, padding, metric, mode)).join("")}
       <text x="${padding}" y="${height - 4}" fill="#6d5d4b" font-size="12">${escapeHtml(rows[0]?.label || "")}</text>
       <text x="${width - padding}" y="${height - 4}" fill="#6d5d4b" font-size="12" text-anchor="end">${escapeHtml(rows.at(-1)?.label || "")}</text>
     </svg>
@@ -1298,28 +1621,41 @@ function renderPriceChart(series) {
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
-  const points = series.map((item, index) => {
+  const dots = series.map((item, index) => {
     const x = padding + ((width - padding * 2) * index) / Math.max(series.length - 1, 1);
     const y = chartY(item.close, min, range, height, padding);
-    return `${x},${y}`;
-  }).join(" ");
+    return {
+      x,
+      y,
+      date: item.date,
+      close: item.close,
+    };
+  });
+  const points = dots.map((item) => `${item.x},${item.y}`).join(" ");
   return `
     <svg viewBox="0 0 ${width} ${height}" class="price-chart" role="img" aria-label="株価推移">
       <rect x="0" y="0" width="${width}" height="${height}" rx="16" fill="rgba(255,255,255,0.48)"></rect>
       <polyline fill="none" stroke="#0d5b52" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${points}"></polyline>
+      ${dots.map((item) => `<circle cx="${item.x}" cy="${item.y}" r="4" fill="#0d5b52" data-point-tooltip="${escapeHtml(`${formatDate(item.date)} / 株価 ${formatNumber(item.close)} 円`)}"><title>${escapeHtml(`${formatDate(item.date)} / 株価 ${formatNumber(item.close)} 円`)}</title></circle>`).join("")}
       <text x="${padding}" y="${padding}" fill="#6d5d4b" font-size="12">${escapeHtml(`${formatNumber(max)} 円`)}</text>
       <text x="${padding}" y="${height - 6}" fill="#6d5d4b" font-size="12">${escapeHtml(`${formatNumber(min)} 円`)}</text>
     </svg>
   `;
 }
 
-function getBucketMetric(bucket, metric, actual) {
+function getRowMetric(row, metric, actual, mode) {
   if (actual) {
-    const value = bucket.actual?.[metric];
+    const value = row.actual?.[metric];
     if (!Number.isFinite(value)) return null;
-    return metric === "eps" ? value : value / 1000000;
+    if (metric === "eps") return value;
+    if (row.actual?.source_type === "tdnet") return value;
+    return value / 1000000;
   }
-  const raw = metric === "eps" ? bucket.forecast?.eps : bucket.forecast?.[`${metric}_mn`];
+  const raw = mode === "annual"
+    ? row.forecast?.[metric]
+    : metric === "eps"
+      ? row.forecast?.eps
+      : row.forecast?.[`${metric}_mn`];
   const value = Number(raw);
   return Number.isFinite(value) ? value : null;
 }
@@ -1328,10 +1664,12 @@ function chartY(value, min, range, height, padding) {
   return height - padding - ((value - min) / range) * (height - padding * 2);
 }
 
-function renderChartPoint(item, min, range, height, padding) {
+function renderChartPoint(item, min, range, height, padding, metric, mode) {
+  const actualLabel = Number.isFinite(item.actual) ? `${item.label} / 実績 ${formatTooltipMetric(item.actual, metric, mode)}` : "";
+  const forecastLabel = Number.isFinite(item.forecast) ? `${item.label} / 予想 ${formatTooltipMetric(item.forecast, metric, mode)}` : "";
   return `
-    ${Number.isFinite(item.actual) ? `<circle cx="${item.x}" cy="${chartY(item.actual, min, range, height, padding)}" r="4.5" fill="#0d5b52"></circle>` : ""}
-    ${Number.isFinite(item.forecast) ? `<circle cx="${item.x}" cy="${chartY(item.forecast, min, range, height, padding)}" r="4.5" fill="#b87512"></circle>` : ""}
+    ${Number.isFinite(item.actual) ? `<circle cx="${item.x}" cy="${chartY(item.actual, min, range, height, padding)}" r="4.5" fill="#0d5b52" data-point-tooltip="${escapeHtml(actualLabel)}"><title>${escapeHtml(actualLabel)}</title></circle>` : ""}
+    ${Number.isFinite(item.forecast) ? `<circle cx="${item.x}" cy="${chartY(item.forecast, min, range, height, padding)}" r="4.5" fill="#b87512" data-point-tooltip="${escapeHtml(forecastLabel)}"><title>${escapeHtml(forecastLabel)}</title></circle>` : ""}
   `;
 }
 
@@ -1341,10 +1679,10 @@ function renderQuarterDetail(company, bucket) {
     <div class="stack">
       <div class="summary-card"><strong>${escapeHtml(bucket.label)}</strong><div class="table-subline">${renderBadges(bucket)}</div></div>
       <div class="metric-strip">
-        ${renderMetricChip("売上高", renderDetailMetric(bucket.actual?.revenue, bucket.forecast?.revenue_mn, true))}
-        ${renderMetricChip("営業利益", renderDetailMetric(bucket.actual?.operating_income, bucket.forecast?.operating_income_mn, true))}
-        ${renderMetricChip("当期利益", renderDetailMetric(bucket.actual?.net_income, bucket.forecast?.net_income_mn, true))}
-        ${renderMetricChip("EPS", renderDetailMetric(bucket.actual?.eps, bucket.forecast?.eps, false))}
+        ${renderMetricChip("売上高", renderDetailMetric(bucket.actual, "revenue", bucket.forecast?.revenue_mn, true))}
+        ${renderMetricChip("営業利益", renderDetailMetric(bucket.actual, "operating_income", bucket.forecast?.operating_income_mn, true))}
+        ${renderMetricChip("当期利益", renderDetailMetric(bucket.actual, "net_income", bucket.forecast?.net_income_mn, true))}
+        ${renderMetricChip("EPS", renderDetailMetric(bucket.actual, "eps", bucket.forecast?.eps, false))}
       </div>
       <div class="summary-card"><strong>資料リンク</strong><div class="document-list">${links.length ? links.map((item) => `<a class="inline-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(item.label)}</a>`).join("") : `<span class="dim">リンクが見つかっていません。</span>`}</div></div>
       ${bucket.forecast?.note ? `<div class="summary-card"><strong>予想メモ</strong><div>${escapeHtml(bucket.forecast.note)}</div></div>` : ""}
@@ -1367,6 +1705,14 @@ function renderQuarterLinkSummary(company, bucket) {
   return links.length ? `<div class="link-row">${links.slice(0, 2).map((item) => `<a class="inline-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(item.label)}</a>`).join("")}</div>` : `<span class="dim">なし</span>`;
 }
 
+function renderAnnualLinkSummary(company, row) {
+  const links = [];
+  if (row.tdnet?.pdf_url) links.push({ label: "決算短信 PDF", url: row.tdnet.pdf_url });
+  const annual = company.external_snapshot.annual_financials.find((item) => Number(item.fiscal_year) === Number(row.fiscal_year) && item.edinet_filing_url);
+  if (annual?.edinet_filing_url) links.push({ label: "有価証券報告書", url: annual.edinet_filing_url });
+  return links.length ? `<div class="link-row">${links.map((item) => `<a class="inline-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(item.label)}</a>`).join("")}</div>` : `<span class="dim">なし</span>`;
+}
+
 function renderNewsList(items) {
   if (!items.length) return `<div class="empty">ニュースはまだ取得されていません。</div>`;
   return items.slice(0, 10).map((item) => `
@@ -1377,6 +1723,51 @@ function renderNewsList(items) {
   `).join("");
 }
 
+function extractValuationSnapshot(company) {
+  const latestRatio = company.external_snapshot.ratios[0] || {};
+  return {
+    per: formatRatioField(latestRatio, ["per"]),
+    pbr: formatRatioField(latestRatio, ["pbr"]),
+    evEbitda: formatRatioField(latestRatio, ["ev_ebitda", "evToEbitda"]),
+    dividendYield: formatPercentField(latestRatio, ["dividend_yield", "yield"]),
+    marketCap: formatMoneyField(latestRatio, ["market_cap", "marketcap"]),
+    enterpriseValue: formatMoneyField(latestRatio, ["enterprise_value", "ev"]),
+  };
+}
+
+function renderValuationHistoryTable(rows) {
+  if (!rows.length) return `<div class="empty">バリュエーション時系列はまだありません。</div>`;
+  const visible = rows.slice(0, 6);
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>期</th>
+            <th>PER</th>
+            <th>PBR</th>
+            <th>EV/EBITDA</th>
+            <th>配当利回り</th>
+            <th>時価総額</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${visible.map((row) => `
+            <tr>
+              <td>${escapeHtml(`${row.fiscal_year || "-"}${row.fiscal_year ? `/${row.fiscal_year_end_month || 3}月期` : ""}`)}</td>
+              <td>${escapeHtml(formatRatioField(row, ["per"]))}</td>
+              <td>${escapeHtml(formatRatioField(row, ["pbr"]))}</td>
+              <td>${escapeHtml(formatRatioField(row, ["ev_ebitda", "evToEbitda"]))}</td>
+              <td>${escapeHtml(formatPercentField(row, ["dividend_yield", "yield"]))}</td>
+              <td>${escapeHtml(formatMoneyField(row, ["market_cap", "marketcap"]))}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderMetricChip(label, value) {
   return `<div class="summary-card"><strong>${escapeHtml(label)}</strong><div>${value}</div></div>`;
 }
@@ -1385,12 +1776,17 @@ function renderSummaryCard(label, value) {
   return `<div class="summary-card"><strong>${escapeHtml(label)}</strong><div>${escapeHtml(value)}</div></div>`;
 }
 
-function renderMetricPair(actualValue, forecastValue, formatter, forecastInMillions) {
+function renderMetricPair(actualRecord, metric, forecastValue, forecastInMillions) {
   const blocks = [];
-  if (Number.isFinite(actualValue)) blocks.push(`<div><span class="badge badge-actual">実績</span> ${escapeHtml(formatter(actualValue))}</div>`);
+  const actualText = formatActualMetric(actualRecord, metric);
+  if (actualText !== "-") blocks.push(`<div><span class="badge badge-actual">実績</span> ${escapeHtml(actualText)}</div>`);
   const forecastNumber = Number(forecastValue);
   if (String(forecastValue || "").trim() && Number.isFinite(forecastNumber)) {
-    const value = forecastInMillions ? formatter(forecastNumber * 1000000) : formatter(forecastNumber);
+    const value = metric === "eps"
+      ? formatYen(forecastNumber)
+      : forecastInMillions
+        ? formatMillions(forecastNumber * 1000000)
+        : formatMillionsFromMn(forecastNumber);
     blocks.push(`<div><span class="badge badge-forecast">予想</span> ${escapeHtml(value)}</div>`);
   }
   return blocks.length ? `<div class="value-stack">${blocks.join("")}</div>` : "-";
@@ -1400,14 +1796,23 @@ function renderBadges(bucket) {
   return [bucket.actual ? `<span class="badge badge-actual">実績</span>` : "", bucket.forecast ? `<span class="badge badge-forecast">予想</span>` : "", bucket.tdnet?.pdf_url ? `<span class="badge badge-doc">資料</span>` : ""].filter(Boolean).join("");
 }
 
-function renderDetailMetric(actualValue, forecastValue, forecastInMillions) {
+function renderDetailMetric(actualRecord, metric, forecastValue, forecastInMillions) {
   const parts = [];
-  if (Number.isFinite(actualValue)) parts.push(`実績 ${forecastInMillions ? formatMillions(actualValue) : `${formatNumber(actualValue)} 円`}`);
+  const actualText = formatActualMetric(actualRecord, metric);
+  if (actualText !== "-") parts.push(`実績 ${actualText}`);
   const forecastNumber = Number(forecastValue);
   if (String(forecastValue || "").trim() && Number.isFinite(forecastNumber)) {
-    parts.push(`予想 ${forecastInMillions ? formatMillions(forecastNumber * 1000000) : `${formatNumber(forecastNumber)} 円`}`);
+    parts.push(`予想 ${metric === "eps" ? formatYen(forecastNumber) : forecastInMillions ? formatMillions(forecastNumber * 1000000) : formatMillionsFromMn(forecastNumber)}`);
   }
   return parts.join(" / ") || "-";
+}
+
+function formatActualMetric(actualRecord, metric) {
+  if (!actualRecord) return "-";
+  const value = Number(actualRecord[metric]);
+  if (!Number.isFinite(value)) return "-";
+  if (metric === "eps") return formatYen(value);
+  return actualRecord.source_type === "tdnet" ? formatMillionsFromMn(value) : formatMillions(value);
 }
 
 function renderMonthOptions(selected) {
@@ -1464,9 +1869,13 @@ function saveConfig() {
 function loadUiState() {
   try {
     const parsed = JSON.parse(localStorage.getItem(LOCAL_UI_KEY) || "{}") || {};
-    return { activeTab: parsed.activeTab || "overview", selectedQuarterKeys: parsed.selectedQuarterKeys || {} };
+    return {
+      activeTab: parsed.activeTab || "overview",
+      earningsView: parsed.earningsView || "quarterly",
+      selectedQuarterKeys: parsed.selectedQuarterKeys || {},
+    };
   } catch {
-    return { activeTab: "overview", selectedQuarterKeys: {} };
+    return { activeTab: "overview", earningsView: "quarterly", selectedQuarterKeys: {} };
   }
 }
 
@@ -1553,6 +1962,25 @@ function unsubscribeAuth() {
   state.authSubscription = null;
 }
 
+function showHoverTooltip(text, x, y) {
+  if (!text) return;
+  if (!state.hoverTooltip) {
+    const node = document.createElement("div");
+    node.className = "chart-tooltip";
+    document.body.appendChild(node);
+    state.hoverTooltip = node;
+  }
+  state.hoverTooltip.textContent = text;
+  state.hoverTooltip.hidden = false;
+  state.hoverTooltip.style.left = `${x + 14}px`;
+  state.hoverTooltip.style.top = `${y + 14}px`;
+}
+
+function hideHoverTooltip() {
+  if (!state.hoverTooltip) return;
+  state.hoverTooltip.hidden = true;
+}
+
 function handleFatalError(error) {
   console.error(error);
   setConfigStatus(`初期化に失敗しました: ${getErrorMessage(error)}`, true);
@@ -1587,6 +2015,26 @@ function parseDate(value) {
   return Number.isFinite(parsed.valueOf()) ? parsed : null;
 }
 
+function parseQuarter(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return 0;
+  if (raw === "FY" || raw === "Q4" || raw === "4Q" || raw === "YEAR") return 4;
+  const match = raw.match(/([1-4])/);
+  return match ? Number(match[1]) : Number(raw) || 0;
+}
+
+function inferFiscalYearFromQuarter(item) {
+  if (item.fiscal_year) return Number(item.fiscal_year);
+  const disclosure = parseDate(item.disclosure_date);
+  const endMonth = Number(item.fiscal_year_end_month || getMonthFromDate(item.fiscal_year_end) || 3);
+  if (!disclosure) return 0;
+  const month = disclosure.getUTCMonth() + 1;
+  let fiscalYear = disclosure.getUTCFullYear();
+  if (month > endMonth + 4) fiscalYear += 1;
+  if (month <= endMonth - 6) fiscalYear -= 0;
+  return fiscalYear;
+}
+
 function normalizeNewsDate(value) {
   const parsed = parseDate(value);
   return parsed ? parsed.toISOString() : "";
@@ -1611,6 +2059,20 @@ function formatMillions(value) {
   return `${new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 0 }).format(Number(value) / 1000000)} 百万円`;
 }
 
+function formatMillionsFromMn(value) {
+  if (!Number.isFinite(Number(value))) return "-";
+  return `${new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 0 }).format(Number(value))} 百万円`;
+}
+
+function formatYen(value) {
+  return Number.isFinite(Number(value)) ? `${formatNumber(value)} 円` : "-";
+}
+
+function formatTooltipMetric(value, metric, mode) {
+  if (metric === "eps") return formatYen(value);
+  return mode === "annual" ? formatMillionsFromMn(value) : formatMillionsFromMn(value);
+}
+
 function formatSignedPercent(value) {
   if (!Number.isFinite(value)) return "-";
   return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
@@ -1618,6 +2080,39 @@ function formatSignedPercent(value) {
 
 function formatTimes(value) {
   return Number.isFinite(value) ? `${value.toFixed(1)}x` : "-";
+}
+
+function toNumberOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function findMetricValue(row, keys) {
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null && String(row[key]) !== "") return row[key];
+  }
+  const lowered = Object.keys(row).map((key) => ({ key, lower: key.toLowerCase() }));
+  for (const candidate of lowered) {
+    if (keys.some((key) => candidate.lower === key.toLowerCase() || candidate.lower.includes(key.toLowerCase()))) {
+      return row[candidate.key];
+    }
+  }
+  return null;
+}
+
+function formatRatioField(row, keys) {
+  const value = toNumberOrNull(findMetricValue(row, keys));
+  return Number.isFinite(value) ? `${value.toFixed(2)}x` : "-";
+}
+
+function formatPercentField(row, keys) {
+  const value = toNumberOrNull(findMetricValue(row, keys));
+  return Number.isFinite(value) ? `${value.toFixed(1)}%` : "-";
+}
+
+function formatMoneyField(row, keys) {
+  const value = toNumberOrNull(findMetricValue(row, keys));
+  return Number.isFinite(value) ? formatMillionsFromMn(value) : "-";
 }
 
 function stringOrNull(value) {
@@ -1642,6 +2137,12 @@ function uid(prefix) {
 
 function today() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function offsetDate(days) {
+  const date = new Date();
+  date.setDate(date.getDate() + Number(days || 0));
+  return date.toISOString().slice(0, 10);
 }
 
 function toYahooTicker(secCode) {

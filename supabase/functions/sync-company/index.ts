@@ -30,6 +30,7 @@ Deno.serve(async (request) => {
       fetchPayload(`https://edinetdb.jp/v1/companies/${edinetCode}/earnings?limit=20`, headers),
     ]);
     const company = extractData(companyPayload) || {};
+    const calendarItems = await fetchCalendar(headers, company?.sec_code || body.secCode || "");
     const ticker = toYahooTicker(company?.sec_code || body.secCode || "");
     const [priceSeries, newsItems] = await Promise.all([
       ticker ? fetchYahooPriceSeries(ticker) : Promise.resolve([]),
@@ -45,6 +46,7 @@ Deno.serve(async (request) => {
       tdnet_earnings: normalizeTdnet(extractData(earningsPayload) || earningsPayload),
       price_series: priceSeries,
       news_items: newsItems,
+      earnings_calendar: calendarItems,
       fetch_status: {
         mode: "edge-function",
         used_function: true,
@@ -102,18 +104,31 @@ function normalizeTdnet(payload: any) {
 }
 
 async function fetchYahooPriceSeries(ticker: string) {
-  const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=2y&interval=1d&includePrePost=false`);
-  const payload = await response.json();
-  const result = payload?.chart?.result?.[0];
-  const timestamps = result?.timestamp || [];
-  const closes = result?.indicators?.quote?.[0]?.close || [];
-
-  return timestamps
-    .map((timestamp: number, index: number) => ({
-      date: new Date(timestamp * 1000).toISOString(),
-      close: closes[index],
-    }))
-    .filter((item: { close: number }) => Number.isFinite(item.close));
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36",
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+    "Referer": "https://finance.yahoo.com/",
+  };
+  for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+    try {
+      const response = await fetch(`https://${host}/v8/finance/chart/${ticker}?range=2y&interval=1d&includePrePost=false`, { headers });
+      const payload = await response.json();
+      const result = payload?.chart?.result?.[0];
+      const timestamps = result?.timestamp || [];
+      const closes = result?.indicators?.quote?.[0]?.close || [];
+      const series = timestamps
+        .map((timestamp: number, index: number) => ({
+          date: new Date(timestamp * 1000).toISOString(),
+          close: closes[index],
+        }))
+        .filter((item: { close: number }) => Number.isFinite(item.close));
+      if (series.length) return series;
+    } catch {
+      continue;
+    }
+  }
+  return [];
 }
 
 async function fetchGoogleNewsItems(companyName: string, ticker: string) {
@@ -135,6 +150,21 @@ async function fetchGoogleNewsItems(companyName: string, ticker: string) {
 function toYahooTicker(secCode: string) {
   const digits = String(secCode || "").replaceAll(/[^0-9]/g, "");
   return digits ? `${digits.slice(0, 4)}.T` : "";
+}
+
+async function fetchCalendar(headers: Record<string, string>, secCode: string) {
+  const code = String(secCode || "").replaceAll(/[^0-9]/g, "").slice(0, 4);
+  if (!code) return [];
+  try {
+    const from = new Date().toISOString().slice(0, 10);
+    const toDate = new Date();
+    toDate.setDate(toDate.getDate() + 180);
+    const to = toDate.toISOString().slice(0, 10);
+    const payload = await fetchPayload(`https://edinetdb.jp/v1/calendar?from=${from}&to=${to}`, headers);
+    return extractArray(payload).filter((item) => String(item.code || item.sec_code || "").replaceAll(/[^0-9]/g, "").startsWith(code));
+  } catch {
+    return [];
+  }
 }
 
 function jsonResponse(payload: unknown, status = 200) {
