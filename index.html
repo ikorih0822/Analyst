@@ -202,6 +202,46 @@
     </div>
   </dialog>
 
+  <script>
+    window.__researchAppBooted = false;
+    (function () {
+      const openDialog = (dialog) => {
+        if (!dialog) return;
+        if (dialog.open) return;
+        if (typeof dialog.showModal === "function") {
+          dialog.showModal();
+          return;
+        }
+        dialog.setAttribute("open", "");
+      };
+
+      const closeDialog = (dialog) => {
+        if (!dialog) return;
+        if (typeof dialog.close === "function") {
+          dialog.close();
+          return;
+        }
+        dialog.removeAttribute("open");
+      };
+
+      window.addEventListener("DOMContentLoaded", () => {
+        const settingsButton = document.querySelector("#settingsButton");
+        const settingsDialog = document.querySelector("#settingsDialog");
+        const closeSettingsDialogButton = document.querySelector("#closeSettingsDialogButton");
+
+        settingsButton?.addEventListener("click", () => openDialog(settingsDialog));
+        closeSettingsDialogButton?.addEventListener("click", () => closeDialog(settingsDialog));
+
+        window.setTimeout(() => {
+          if (window.__researchAppBooted) return;
+          const subtitle = document.querySelector("#workspaceSubtitle");
+          if (subtitle) {
+            subtitle.textContent = "アプリ初期化に失敗しています。設定画面を開いて接続情報を確認してください。";
+          }
+        }, 1200);
+      });
+    }());
+  </script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

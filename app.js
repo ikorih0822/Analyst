@@ -1,4 +1,4 @@
-﻿import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+﻿let supabaseCreateClient = null;
 
 const LOCAL_CONFIG_KEY = "jp-research-cockpit-config-v1";
 const LOCAL_UI_KEY = "jp-research-cockpit-ui-v1";
@@ -65,7 +65,11 @@ const el = {
   companyForm: document.querySelector("#companyForm"),
 };
 
-boot();
+boot()
+  .then(() => {
+    window.__researchAppBooted = true;
+  })
+  .catch(handleFatalError);
 
 async function boot() {
   applyConfigToInputs();
@@ -86,7 +90,7 @@ function wireEvents() {
   el.closeSidebarButton?.addEventListener("click", closeSidebar);
   el.sidebarScrim?.addEventListener("click", closeSidebar);
   el.settingsButton?.addEventListener("click", openSettingsDialog);
-  el.closeSettingsDialogButton?.addEventListener("click", () => el.settingsDialog.close());
+  el.closeSettingsDialogButton?.addEventListener("click", () => closeDialog(el.settingsDialog));
 
   el.signInButton.addEventListener("click", signIn);
   el.signUpButton.addEventListener("click", signUp);
@@ -122,7 +126,7 @@ function wireEvents() {
   el.exportButton.addEventListener("click", exportCompanies);
   el.syncCompanyButton.addEventListener("click", syncSelectedCompany);
   el.newCompanyButton.addEventListener("click", () => openCompanyDialog());
-  el.closeCompanyDialogButton.addEventListener("click", () => el.companyDialog.close());
+  el.closeCompanyDialogButton.addEventListener("click", () => closeDialog(el.companyDialog));
 
   el.companyForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -201,6 +205,7 @@ async function initSupabase() {
   }
 
   try {
+    const createClient = await ensureSupabaseClientFactory();
     state.supabase = createClient(supabaseUrl, supabaseAnonKey, {
       auth: { persistSession: true, autoRefreshToken: true },
     });
@@ -287,7 +292,7 @@ async function signIn() {
     if (error) throw error;
     state.session = data.session;
     setAuthStatus(`ログイン中: ${data.user.email}`, false);
-    if (el.settingsDialog?.open) el.settingsDialog.close();
+    if (el.settingsDialog?.open) closeDialog(el.settingsDialog);
     await loadCompanies();
     render();
   } catch (error) {
@@ -937,7 +942,7 @@ async function saveCompanyFromDialog() {
       if (error) throw error;
       upsertLocalCompany(data);
     }
-    el.companyDialog.close();
+    closeDialog(el.companyDialog);
     setAuthStatus("企業情報を保存しました。", false);
     render();
   } catch (error) {
@@ -1099,7 +1104,7 @@ function openCompanyDialog(companyId = "") {
     }
   }
 
-  el.companyDialog.showModal();
+  openDialog(el.companyDialog);
 }
 
 function exportCompanies() {
@@ -1386,6 +1391,22 @@ function escapeHtml(value) {
 
 function getErrorMessage(error) {
   return error?.message || "処理に失敗しました。";
+}
+
+function handleFatalError(error) {
+  console.error(error);
+  const message = `初期化に失敗しました: ${getErrorMessage(error)}`;
+  try {
+    setConfigStatus(message, true);
+    setAuthStatus(message, true);
+  } catch {}
+}
+
+async function ensureSupabaseClientFactory() {
+  if (supabaseCreateClient) return supabaseCreateClient;
+  const module = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
+  supabaseCreateClient = module.createClient;
+  return supabaseCreateClient;
 }
 
 const FORECAST_TEMPLATE = {
@@ -1784,7 +1805,7 @@ function syncConfigFromInputs() {
 
 function openSettingsDialog() {
   applyConfigToInputs();
-  el.settingsDialog?.showModal();
+  openDialog(el.settingsDialog);
   closeSidebar();
 }
 
@@ -1801,6 +1822,25 @@ function toggleSidebar() {
 function closeSidebar() {
   el.sidebar?.classList.remove("open");
   if (el.sidebarScrim) el.sidebarScrim.hidden = true;
+}
+
+function openDialog(dialog) {
+  if (!dialog) return;
+  if (dialog.open) return;
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+    return;
+  }
+  dialog.setAttribute("open", "");
+}
+
+function closeDialog(dialog) {
+  if (!dialog) return;
+  if (typeof dialog.close === "function") {
+    dialog.close();
+    return;
+  }
+  dialog.removeAttribute("open");
 }
 
 function buildQuarterBuckets(company) {
@@ -1914,7 +1954,7 @@ async function saveCompanyFromDialog() {
       if (error) throw error;
       upsertLocalCompany(data);
     }
-    el.companyDialog.close();
+    closeDialog(el.companyDialog);
     setAuthStatus("企業情報を保存しました。", false);
     render();
   } catch (error) {
