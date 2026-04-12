@@ -214,7 +214,11 @@ async function initSupabase() {
 
     state.session = session;
     if (state.authSubscription) {
-      state.authSubscription.subscription.unsubscribe();
+      const subscription =
+        state.authSubscription?.data?.subscription
+        || state.authSubscription?.subscription
+        || null;
+      subscription?.unsubscribe?.();
     }
     state.authSubscription = state.supabase.auth.onAuthStateChange(async (_event, nextSession) => {
       state.session = nextSession;
@@ -247,7 +251,7 @@ async function initSupabase() {
 
 async function signUp() {
   syncConfigFromInputs();
-  if (!state.supabase) await initSupabase();
+  await initSupabase();
   if (!state.supabase) {
     setAuthStatus("設定を確認してください。", true);
     return;
@@ -268,7 +272,7 @@ async function signUp() {
 
 async function signIn() {
   syncConfigFromInputs();
-  if (!state.supabase) await initSupabase();
+  await initSupabase();
   if (!state.supabase) {
     setAuthStatus("設定を確認してください。", true);
     return;
