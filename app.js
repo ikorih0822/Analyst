@@ -79,12 +79,14 @@ async function boot() {
 }
 
 function wireEvents() {
-  el.saveSupabaseConfigButton.addEventListener("click", async () => {
-    syncConfigFromInputs();
-    setConfigStatus("接続確認中...", false);
-    await initSupabase();
-    render();
-  });
+  if (!window.__settingsInlineHandlers) {
+    el.saveSupabaseConfigButton.addEventListener("click", async () => {
+      syncConfigFromInputs();
+      setConfigStatus("接続確認中...", false);
+      await initSupabase();
+      render();
+    });
+  }
 
   el.menuToggleButton?.addEventListener("click", toggleSidebar);
   el.closeSidebarButton?.addEventListener("click", closeSidebar);
@@ -92,8 +94,10 @@ function wireEvents() {
   el.settingsButton?.addEventListener("click", openSettingsDialog);
   el.closeSettingsDialogButton?.addEventListener("click", () => closeDialog(el.settingsDialog));
 
-  el.signInButton.addEventListener("click", signIn);
-  el.signUpButton.addEventListener("click", signUp);
+  if (!window.__settingsInlineHandlers) {
+    el.signInButton.addEventListener("click", signIn);
+    el.signUpButton.addEventListener("click", signUp);
+  }
   el.signOutButton.addEventListener("click", signOut);
 
   el.importSearchButton.addEventListener("click", () => searchImportCandidates());

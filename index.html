@@ -204,7 +204,10 @@
 
   <script>
     window.__researchAppBooted = false;
+    window.__settingsInlineHandlers = true;
     (function () {
+      const CONFIG_KEY = "jp-research-cockpit-config-v1";
+
       const openDialog = (dialog) => {
         if (!dialog) return;
         if (dialog.open) return;
@@ -224,13 +227,110 @@
         dialog.removeAttribute("open");
       };
 
+      const readConfig = () => ({
+        supabaseUrl: document.querySelector("#supabaseUrlInput")?.value?.trim() || "",
+        supabaseAnonKey: document.querySelector("#supabaseAnonKeyInput")?.value?.trim() || "",
+        edinetApiKey: document.querySelector("#edinetApiKeyInput")?.value?.trim() || "",
+      });
+
+      const applySavedConfig = () => {
+        try {
+          const saved = JSON.parse(localStorage.getItem(CONFIG_KEY) || "{}") || {};
+          const supabaseUrlInput = document.querySelector("#supabaseUrlInput");
+          const supabaseAnonKeyInput = document.querySelector("#supabaseAnonKeyInput");
+          const edinetApiKeyInput = document.querySelector("#edinetApiKeyInput");
+          if (supabaseUrlInput && !supabaseUrlInput.value) supabaseUrlInput.value = saved.supabaseUrl || "";
+          if (supabaseAnonKeyInput && !supabaseAnonKeyInput.value) supabaseAnonKeyInput.value = saved.supabaseAnonKey || "";
+          if (edinetApiKeyInput && !edinetApiKeyInput.value) edinetApiKeyInput.value = saved.edinetApiKey || "";
+        } catch {}
+      };
+
+      const saveConfig = (config) => {
+        localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+      };
+
+      const setConfigStatus = (message, isError) => {
+        const node = document.querySelector("#supabaseConfigStatus");
+        if (!node) return;
+        node.textContent = message;
+        node.style.color = isError ? "#9f4134" : "";
+      };
+
+      const setAuthStatus = (message, isError) => {
+        const node = document.querySelector("#authStatus");
+        if (!node) return;
+        node.textContent = message;
+        node.style.color = isError ? "#9f4134" : "";
+      };
+
+      const getSupabaseClient = async () => {
+        const config = readConfig();
+        saveConfig(config);
+        if (!config.supabaseUrl || !config.supabaseAnonKey) {
+          throw new Error("Supabase URL と anon key を入力してください。");
+        }
+        const mod = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
+        return {
+          client: mod.createClient(config.supabaseUrl, config.supabaseAnonKey, {
+            auth: { persistSession: true, autoRefreshToken: true },
+          }),
+        };
+      };
+
       window.addEventListener("DOMContentLoaded", () => {
+        applySavedConfig();
+
         const settingsButton = document.querySelector("#settingsButton");
         const settingsDialog = document.querySelector("#settingsDialog");
         const closeSettingsDialogButton = document.querySelector("#closeSettingsDialogButton");
+        const saveSupabaseConfigButton = document.querySelector("#saveSupabaseConfigButton");
+        const signInButton = document.querySelector("#signInButton");
+        const signUpButton = document.querySelector("#signUpButton");
 
         settingsButton?.addEventListener("click", () => openDialog(settingsDialog));
         closeSettingsDialogButton?.addEventListener("click", () => closeDialog(settingsDialog));
+
+        saveSupabaseConfigButton?.addEventListener("click", async () => {
+          try {
+            setConfigStatus("接続確認中...", false);
+            const { client } = await getSupabaseClient();
+            const { error } = await client.auth.getSession();
+            if (error) throw error;
+            setConfigStatus("Supabase へ接続できました。", false);
+          } catch (error) {
+            setConfigStatus(error?.message || "接続確認に失敗しました。", true);
+          }
+        });
+
+        signInButton?.addEventListener("click", async () => {
+          try {
+            setAuthStatus("ログイン中...", false);
+            const { client } = await getSupabaseClient();
+            const email = document.querySelector("#emailInput")?.value?.trim() || "";
+            const password = document.querySelector("#passwordInput")?.value || "";
+            const { error, data } = await client.auth.signInWithPassword({ email, password });
+            if (error) throw error;
+            setAuthStatus(`ログイン中: ${data.user.email}`, false);
+            closeDialog(settingsDialog);
+            window.location.reload();
+          } catch (error) {
+            setAuthStatus(error?.message || "ログインに失敗しました。", true);
+          }
+        });
+
+        signUpButton?.addEventListener("click", async () => {
+          try {
+            setAuthStatus("登録処理中...", false);
+            const { client } = await getSupabaseClient();
+            const email = document.querySelector("#emailInput")?.value?.trim() || "";
+            const password = document.querySelector("#passwordInput")?.value || "";
+            const { error } = await client.auth.signUp({ email, password });
+            if (error) throw error;
+            setAuthStatus("新規登録を送信しました。メール確認が必要なら受信箱を確認してください。", false);
+          } catch (error) {
+            setAuthStatus(error?.message || "新規登録に失敗しました。", true);
+          }
+        });
 
         window.setTimeout(() => {
           if (window.__researchAppBooted) return;
