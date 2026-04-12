@@ -34,7 +34,7 @@ Deno.serve(async (request) => {
     const ticker = toYahooTicker(company?.sec_code || body.secCode || "");
     const [priceSeries, newsItems] = await Promise.all([
       ticker ? fetchYahooPriceSeries(ticker) : Promise.resolve([]),
-      fetchGoogleNewsItems(company.name || body.name || "", ticker),
+      fetchRelatedNews(company.name || body.name || "", ticker),
     ]);
 
     return jsonResponse({
@@ -128,7 +128,49 @@ async function fetchYahooPriceSeries(ticker: string) {
       continue;
     }
   }
+  for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+    try {
+      const response = await fetch(`https://${host}/v7/finance/spark?symbols=${ticker}&range=2y&interval=1d&indicators=close&includeTimestamps=true`, { headers });
+      const payload = await response.json();
+      const result = payload?.spark?.result?.[0]?.response?.[0] || payload?.spark?.result?.[0];
+      const timestamps = result?.timestamp || [];
+      const closes = result?.indicators?.quote?.[0]?.close || result?.close || [];
+      const series = timestamps
+        .map((timestamp: number, index: number) => ({
+          date: new Date(timestamp * 1000).toISOString(),
+          close: closes[index],
+        }))
+        .filter((item: { close: number }) => Number.isFinite(item.close));
+      if (series.length) return series;
+    } catch {
+      continue;
+    }
+  }
   return [];
+}
+
+async function fetchRelatedNews(companyName: string, ticker: string) {
+  const yahooNews = await fetchYahooNewsItems(ticker);
+  if (yahooNews.length) return yahooNews;
+  return fetchGoogleNewsItems(companyName, ticker);
+}
+
+async function fetchYahooNewsItems(ticker: string) {
+  if (!ticker) return [];
+  try {
+    const response = await fetch(`https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(ticker)}&region=US&lang=ja-JP`);
+    const xml = await response.text();
+    const doc = new DOMParser().parseFromString(xml, "application/xml");
+    const items = Array.from(doc?.querySelectorAll("item") || []);
+    return items.slice(0, 10).map((item) => ({
+      title: item.querySelector("title")?.textContent?.trim() || "",
+      link: item.querySelector("link")?.textContent?.trim() || "",
+      source: "Yahoo Finance",
+      published_at: item.querySelector("pubDate")?.textContent?.trim() || "",
+    })).filter((item) => item.title && item.link);
+  } catch {
+    return [];
+  }
 }
 
 async function fetchGoogleNewsItems(companyName: string, ticker: string) {
@@ -161,7 +203,23 @@ async function fetchCalendar(headers: Record<string, string>, secCode: string) {
     toDate.setDate(toDate.getDate() + 180);
     const to = toDate.toISOString().slice(0, 10);
     const payload = await fetchPayload(`https://edinetdb.jp/v1/calendar?from=${from}&to=${to}`, headers);
-    return extractArray(payload).filter((item) => String(item.code || item.sec_code || "").replaceAll(/[^0-9]/g, "").startsWith(code));
+    const rows = extractArray(payload).filter((item) => String(item.code || item.sec_code || "").replaceAll(/[^0-9]/g, "").startsWith(code));
+    if (rows.length) return rows;
+  } catch {}
+
+  try {
+    const response = await fetch("https://edinetdb.com/calendar");
+    const html = await response.text();
+    const pattern = /(\d{4}-\d{2}-\d{2})\s+.*?>([0-9A-Z]{4,5})<.*?>([^<]+)<.*?★\s+(\d{4}-\d{2}-\d{2})\s+([^<\n]+)/g;
+    return [...html.matchAll(pattern)]
+      .map((match) => ({
+        date: match[1],
+        code: match[2],
+        company: match[3].trim(),
+        fiscal_end: match[4],
+        label: match[5].trim(),
+      }))
+      .filter((item) => String(item.code || "").replaceAll(/[^0-9]/g, "").startsWith(code));
   } catch {
     return [];
   }

@@ -1002,6 +1002,28 @@ function buildQuarterBuckets(company) {
     });
   }
 
+  for (const annual of annualMap.values()) {
+    const q4Key = quarterKey({ fiscal_year: annual.fiscal_year, fiscal_year_end_month: annual.fiscal_year_end_month, quarter: 4 });
+    const q3 = cumulativeMap.get(quarterKey({ fiscal_year: annual.fiscal_year, fiscal_year_end_month: annual.fiscal_year_end_month, quarter: 3 }));
+    const standaloneQ4 = {
+      ...annual,
+      quarter: 4,
+      source_type: annual.source_type || "yuho",
+      revenue: computeStandaloneMetric(annual.revenue, q3?.revenue, 4, annual.revenue),
+      operating_income: computeStandaloneMetric(annual.operating_income, q3?.operating_income, 4, annual.operating_income),
+      ordinary_income: computeStandaloneMetric(annual.ordinary_income, q3?.ordinary_income, 4, annual.ordinary_income),
+      net_income: computeStandaloneMetric(annual.net_income, q3?.net_income, 4, annual.net_income),
+      eps: computeStandaloneMetric(annual.eps, q3?.eps, 4, annual.eps),
+      submit_date: annual.submit_date || annual.disclosure_date || "",
+    };
+    map.set(q4Key, {
+      ...(map.get(q4Key) || makeQuarterBucket(standaloneQ4)),
+      actual: standaloneQ4,
+      source_actual: annual,
+      tdnet: annual.source_type === "tdnet" ? annual : map.get(q4Key)?.tdnet || null,
+    });
+  }
+
   for (const item of company.manual_forecast) {
     const key = quarterKey(item);
     map.set(key, { ...(map.get(key) || makeQuarterBucket(item)), forecast: item });
@@ -1230,7 +1252,7 @@ function annualKey(item) {
 }
 
 function annualLabel(item) {
-  return `${Number(item.fiscal_year || 0)}/${Number(item.fiscal_year_end_month || 3)}月期`;
+  return `${displayFiscalYear(item)}/${Number(item.fiscal_year_end_month || 3)}月期`;
 }
 
 function getSelectedQuarterBucket(company, buckets) {
@@ -1529,7 +1551,22 @@ async function fetchEdinetCalendar(headers, secCode) {
   try {
     const payload = await fetchEdinetPayload(`https://edinetdb.jp/v1/calendar?from=${from}&to=${to}`, headers);
     const rows = extractEdinetArray(payload);
-    return rows.filter((item) => String(item.code || item.sec_code || "").replace(/\D/g, "").startsWith(code));
+    const filtered = rows.filter((item) => String(item.code || item.sec_code || "").replace(/\D/g, "").startsWith(code));
+    if (filtered.length) return filtered;
+  } catch {}
+
+  try {
+    const response = await fetch("https://edinetdb.com/calendar");
+    const html = await response.text();
+    const pattern = /(\d{4}-\d{2}-\d{2})\s+.*?>([0-9A-Z]{4,5})<.*?>([^<]+)<.*?★\s+(\d{4}-\d{2}-\d{2})\s+([^<\n]+)/g;
+    const matches = [...html.matchAll(pattern)].map((match) => ({
+      date: match[1],
+      code: match[2],
+      company: match[3].trim(),
+      fiscal_end: match[4],
+      label: match[5].trim(),
+    }));
+    return matches.filter((item) => String(item.code || "").replace(/\D/g, "").startsWith(code));
   } catch {
     return [];
   }
@@ -1550,21 +1587,47 @@ function extractEdinetArray(payload) {
 async function fetchYahooPriceSeries(ticker) {
   if (!ticker) return [];
   try {
-    const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=1y&interval=1d&includePrePost=false`);
-    const payload = await response.json();
-    const result = payload?.chart?.result?.[0];
-    const timestamps = result?.timestamp || [];
-    const closes = result?.indicators?.quote?.[0]?.close || [];
-    return timestamps.map((stamp, index) => ({
-      date: new Date(stamp * 1000).toISOString().slice(0, 10),
-      close: Number(closes[index]),
-    })).filter((item) => item.date && Number.isFinite(item.close));
+    for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+      try {
+        const response = await fetch(`https://${host}/v8/finance/chart/${encodeURIComponent(ticker)}?range=1y&interval=1d&includePrePost=false&events=div%2Csplits`);
+        const payload = await response.json();
+        const result = payload?.chart?.result?.[0];
+        const timestamps = result?.timestamp || [];
+        const closes = result?.indicators?.quote?.[0]?.close || [];
+        const chartSeries = timestamps.map((stamp, index) => ({
+          date: new Date(stamp * 1000).toISOString().slice(0, 10),
+          close: Number(closes[index]),
+        })).filter((item) => item.date && Number.isFinite(item.close));
+        if (chartSeries.length) return chartSeries;
+      } catch {
+        continue;
+      }
+    }
+    for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+      try {
+        const response = await fetch(`https://${host}/v7/finance/spark?symbols=${encodeURIComponent(ticker)}&range=1y&interval=1d&indicators=close&includeTimestamps=true`);
+        const payload = await response.json();
+        const result = payload?.spark?.result?.[0]?.response?.[0] || payload?.spark?.result?.[0];
+        const timestamps = result?.timestamp || [];
+        const closes = result?.indicators?.quote?.[0]?.close || result?.close || [];
+        const sparkSeries = timestamps.map((stamp, index) => ({
+          date: new Date(stamp * 1000).toISOString().slice(0, 10),
+          close: Number(closes[index]),
+        })).filter((item) => item.date && Number.isFinite(item.close));
+        if (sparkSeries.length) return sparkSeries;
+      } catch {
+        continue;
+      }
+    }
+    return [];
   } catch {
     return [];
   }
 }
 
 async function fetchGoogleNewsItems(companyName, ticker) {
+  const yahooNews = await fetchYahooNewsItems(ticker);
+  if (yahooNews.length) return yahooNews;
   if (!companyName && !ticker) return [];
   try {
     const response = await fetch(`https://news.google.com/rss/search?q=${encodeURIComponent([companyName, ticker].filter(Boolean).join(" OR "))}&hl=ja&gl=JP&ceid=JP:ja`);
@@ -1574,6 +1637,23 @@ async function fetchGoogleNewsItems(companyName, ticker) {
       title: item.querySelector("title")?.textContent?.trim() || "",
       link: item.querySelector("link")?.textContent?.trim() || "",
       source: item.querySelector("source")?.textContent?.trim() || "",
+      published_at: normalizeNewsDate(item.querySelector("pubDate")?.textContent?.trim() || ""),
+    })).filter((item) => item.title && item.link);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchYahooNewsItems(ticker) {
+  if (!ticker) return [];
+  try {
+    const response = await fetch(`https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(ticker)}&region=US&lang=ja-JP`);
+    const text = await response.text();
+    const doc = new DOMParser().parseFromString(text, "application/xml");
+    return Array.from(doc.querySelectorAll("item")).slice(0, 10).map((item) => ({
+      title: item.querySelector("title")?.textContent?.trim() || "",
+      link: item.querySelector("link")?.textContent?.trim() || "",
+      source: "Yahoo Finance",
       published_at: normalizeNewsDate(item.querySelector("pubDate")?.textContent?.trim() || ""),
     })).filter((item) => item.title && item.link);
   } catch {
@@ -1754,7 +1834,7 @@ function renderValuationHistoryTable(rows) {
         <tbody>
           ${visible.map((row) => `
             <tr>
-              <td>${escapeHtml(`${row.fiscal_year || "-"}${row.fiscal_year ? `/${row.fiscal_year_end_month || 3}月期` : ""}`)}</td>
+              <td>${escapeHtml(`${displayFiscalYear(row) || "-"}${row.fiscal_year ? `/${row.fiscal_year_end_month || 3}月期` : ""}`)}</td>
               <td>${escapeHtml(formatRatioField(row, ["per"]))}</td>
               <td>${escapeHtml(formatRatioField(row, ["pbr"]))}</td>
               <td>${escapeHtml(formatRatioField(row, ["ev_ebitda", "evToEbitda"]))}</td>
@@ -1839,7 +1919,7 @@ function quarterKey(item) {
 }
 
 function quarterLabel(item) {
-  return `${Number(item.fiscal_year || 0)}/${Number(item.fiscal_year_end_month || 3)}月期 ${Number(item.quarter || 0)}Q`;
+  return `${displayFiscalYear(item)}/${Number(item.fiscal_year_end_month || 3)}月期 ${Number(item.quarter || 0)}Q`;
 }
 
 function compareQuarterDesc(left, right) {
@@ -2029,10 +2109,16 @@ function inferFiscalYearFromQuarter(item) {
   const endMonth = Number(item.fiscal_year_end_month || getMonthFromDate(item.fiscal_year_end) || 3);
   if (!disclosure) return 0;
   const month = disclosure.getUTCMonth() + 1;
-  let fiscalYear = disclosure.getUTCFullYear();
-  if (month > endMonth + 4) fiscalYear += 1;
-  if (month <= endMonth - 6) fiscalYear -= 0;
-  return fiscalYear;
+  let endYear = disclosure.getUTCFullYear();
+  if (month > endMonth) endYear += 1;
+  return endMonth === 12 ? endYear : endYear - 1;
+}
+
+function displayFiscalYear(item) {
+  const raw = Number(item.fiscal_year || 0);
+  if (!raw) return 0;
+  const endMonth = Number(item.fiscal_year_end_month || 3);
+  return raw + (endMonth === 12 ? 0 : 1);
 }
 
 function normalizeNewsDate(value) {
