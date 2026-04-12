@@ -6,6 +6,7 @@ const DEFAULT_CONFIG = {
   supabaseUrl: "https://kucwkuskoqwdtvmewtik.supabase.co",
   supabaseAnonKey:
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt1Y3drdXNrb3F3ZHR2bWV3dGlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU5NTA1MzcsImV4cCI6MjA5MTUyNjUzN30.RReLIipWvYwO4qx3UBUbIFMD3E7EiuRfvdllUURCGp4",
+  edinetApiKey: "",
 };
 const DEFAULT_SCORECARD = { quality: 3, momentum: 3, valuation: 3, management: 3 };
 const DEFAULT_FORECAST = { revenue_mn: "", operating_income_mn: "", eps: "", note: "" };
@@ -28,6 +29,7 @@ const state = {
 const el = {
   supabaseUrlInput: document.querySelector("#supabaseUrlInput"),
   supabaseAnonKeyInput: document.querySelector("#supabaseAnonKeyInput"),
+  edinetApiKeyInput: document.querySelector("#edinetApiKeyInput"),
   saveSupabaseConfigButton: document.querySelector("#saveSupabaseConfigButton"),
   supabaseConfigStatus: document.querySelector("#supabaseConfigStatus"),
   emailInput: document.querySelector("#emailInput"),
@@ -69,6 +71,7 @@ function wireEvents() {
   el.saveSupabaseConfigButton.addEventListener("click", async () => {
     state.config.supabaseUrl = el.supabaseUrlInput.value.trim();
     state.config.supabaseAnonKey = el.supabaseAnonKeyInput.value.trim();
+    state.config.edinetApiKey = el.edinetApiKeyInput.value.trim();
     saveConfig();
     await initSupabase();
     render();
@@ -324,7 +327,7 @@ async function importCompany(edinetCode) {
 
   try {
     setAuthStatus("EDINET データを取得しています...", false);
-    const payload = await callSyncFunction({ edinetCode });
+    const payload = await fetchExternalData({ edinetCode });
     const candidate = buildCompanyFromExternal(payload);
     const existing = state.companies.find((item) => item.edinet_code === candidate.edinet_code);
     const row = existing ? { ...candidate, id: existing.id } : candidate;
@@ -357,7 +360,7 @@ async function syncSelectedCompany() {
 
   try {
     setAuthStatus(`${company.name} を再同期しています...`, false);
-    const payload = await callSyncFunction({ edinetCode: company.edinet_code });
+    const payload = await fetchExternalData({ edinetCode: company.edinet_code, secCode: company.sec_code, name: company.name });
     const refreshed = buildCompanyFromExternal(payload, company);
     const { data, error } = await state.supabase
       .from("research_companies")
@@ -378,11 +381,39 @@ async function syncSelectedCompany() {
   }
 }
 
-async function callSyncFunction(body) {
-  if (!state.supabase) throw new Error("Supabase が未設定です。");
-  const { data, error } = await state.supabase.functions.invoke("sync-company", { body });
-  if (error) throw error;
-  return data;
+async function fetchExternalData(input) {
+  if (!state.config.edinetApiKey) {
+    throw new Error("EDINET DB API Key を入力してください。");
+  }
+
+  const edinetCode = input.edinetCode || (await resolveEdinetCode(input));
+  if (!edinetCode) throw new Error("EDINET コードを特定できませんでした。");
+
+  const headers = { "X-API-Key": state.config.edinetApiKey };
+  const [company, annualFinancials, quarterlyFinancials, ratios, analysis, tdnetEarnings] = await Promise.all([
+    fetchEdinetJson(`https://edinetdb.jp/v1/companies/${edinetCode}`, headers),
+    fetchEdinetJson(`https://edinetdb.jp/v1/companies/${edinetCode}/financials?years=5`, headers),
+    fetchEdinetJson(`https://edinetdb.jp/v1/companies/${edinetCode}/financials?period=quarterly&years=12`, headers),
+    fetchEdinetJson(`https://edinetdb.jp/v1/companies/${edinetCode}/ratios`, headers),
+    fetchEdinetJson(`https://edinetdb.jp/v1/companies/${edinetCode}/analysis`, headers),
+    fetchEdinetJson(`https://edinetdb.jp/v1/companies/${edinetCode}/earnings?limit=8`, headers),
+  ]);
+
+  const priceSeries = await fetchYahooPriceSeries(toYahooTicker(company?.sec_code || input.secCode || ""));
+
+  return {
+    company,
+    annual_financials: Array.isArray(annualFinancials) ? annualFinancials : [],
+    quarterly_financials: Array.isArray(quarterlyFinancials) ? quarterlyFinancials : [],
+    ratios: Array.isArray(ratios) ? ratios : [],
+    analysis: analysis || {},
+    tdnet_earnings: Array.isArray(tdnetEarnings) ? tdnetEarnings : [],
+    price_series: priceSeries,
+    rights: {
+      edinetdb_note: "あなた個人がログインして利用する前提で使用しています。再配布用途へ広げる前には規約本文の確認を推奨します。",
+      price_note: "Yahoo Finance 系データは personal use only 前提です。このアプリはあなた個人が PC とスマホで参照する用途に寄せています。",
+    },
+  };
 }
 
 function render() {
@@ -1089,6 +1120,58 @@ function buildCompanyFromExternal(payload, existing = null) {
   };
 }
 
+async function resolveEdinetCode(input) {
+  const query = input.secCode || input.name;
+  if (!query) return "";
+
+  const response = await fetch(`https://edinetdb.jp/v1/search?q=${encodeURIComponent(query)}&limit=5`);
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || "EDINET 検索に失敗しました。");
+  }
+
+  const results = Array.isArray(payload.data) ? payload.data : [];
+  if (!results.length) return "";
+
+  const secCode = String(input.secCode || "").replaceAll(/[^0-9]/g, "");
+  const exactSec = results.find((item) => String(item.sec_code || "").startsWith(secCode));
+  return (exactSec || results[0]).edinet_code || "";
+}
+
+async function fetchEdinetJson(url, headers) {
+  const response = await fetch(url, { headers });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `EDINET DB request failed: ${url}`);
+  }
+  return payload.data;
+}
+
+async function fetchYahooPriceSeries(ticker) {
+  if (!ticker) return [];
+  try {
+    const response = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=1y&interval=1d&includePrePost=false`);
+    const payload = await response.json();
+    const result = payload?.chart?.result?.[0];
+    const timestamps = result?.timestamp || [];
+    const closes = result?.indicators?.quote?.[0]?.close || [];
+    return timestamps
+      .map((timestamp, index) => ({
+        date: new Date(timestamp * 1000).toISOString(),
+        close: closes[index],
+      }))
+      .filter((item) => Number.isFinite(item.close));
+  } catch {
+    return [];
+  }
+}
+
+function toYahooTicker(secCode) {
+  const digits = String(secCode || "").replaceAll(/[^0-9]/g, "");
+  if (!digits) return "";
+  return `${digits.slice(0, 4)}.T`;
+}
+
 function normalizeCompanyRow(row) {
   return {
     id: row.id,
@@ -1143,6 +1226,7 @@ function saveUiState() {
 function applyConfigToInputs() {
   el.supabaseUrlInput.value = state.config.supabaseUrl || "";
   el.supabaseAnonKeyInput.value = state.config.supabaseAnonKey || "";
+  el.edinetApiKeyInput.value = state.config.edinetApiKey || "";
 }
 
 function setConfigStatus(message, isError) {

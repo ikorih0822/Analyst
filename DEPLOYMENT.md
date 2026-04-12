@@ -4,15 +4,13 @@
 
 1. Supabase プロジェクト作成
 2. `supabase/schema.sql` を実行
-3. `sync-company` Edge Function をデプロイ
-4. `EDINETDB_API_KEY` を secret に登録
 
 ## 2. GitHub 公開
 
 1. このリポジトリを GitHub に push
 2. GitHub Pages を branch root で有効化
 3. 公開 URL にアクセス
-4. 初回アクセス時に Supabase URL / anon key を入力
+4. 初回アクセス時に Supabase URL / anon key / EDINET DB API key を入力
 5. サインアップまたはログイン
 
 ## 3. スマホ閲覧
@@ -22,5 +20,5 @@
 
 ## 4. まだ未完の部分
 
-- 株価自動取得は価格ソースの権利確認後に接続
-- そのため Valuation タブの価格チャートは現時点ではプレースホルダ表示です
+- Yahoo Finance 系の取得は入れてあるが、系列の見た目はまだ簡易チャート
+- より高度なテクニカル表示や期間切替は今後追加可能
