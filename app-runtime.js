@@ -35,6 +35,9 @@ const state = {
   companySearch: "",
   statusFilter: "all",
   hoverTooltip: null,
+  peerComparison: { items: [], loading: false, error: "" },
+  historicalComparison: { items: [], loading: false, error: "" },
+  comparisonCache: {},
 };
 
 const el = {
@@ -198,6 +201,8 @@ function wireEvents() {
     if (formType === "valuation") await saveValuationForm(form);
     if (formType === "note") await saveNoteForm(form);
     if (formType === "question") await saveQuestionFormV2(form);
+    if (formType === "peer-comparison") await loadPeerComparison(form);
+    if (formType === "historical-comparison") await loadHistoricalComparison(form);
   });
 
   document.addEventListener("pointermove", (event) => {
@@ -407,6 +412,8 @@ function renderWorkspace() {
     overview: renderOverviewV2(company),
     earnings: renderEarnings(company),
     valuation: renderValuation(company),
+    peers: renderPeerComparison(company),
+    history: renderHistoricalComparison(company),
     notes: renderNotesV2(company),
     questions: renderNotesV2(company),
     settings: renderAutoData(company),
@@ -588,6 +595,460 @@ function renderValuation(company) {
     </div>
   `;
 }
+
+function renderPeerComparison(company) {
+  const items = ensurePrimaryComparisonDataset(company, state.peerComparison.items);
+  return `
+    <div class="panel-grid">
+      <section class="panel">
+        <h3>同業比較</h3>
+        <p class="help-text">選択中の銘柄を基準に、比較したい銘柄コードを入力してください。現在の銘柄は自動で比較対象に含みます。</p>
+        <form data-form="peer-comparison" class="stack">
+          <label>
+            <span>比較銘柄コード</span>
+            <textarea name="codes" rows="3" placeholder="7267, 7201, 7269">${escapeHtml(state.ui.peerCodes || "")}</textarea>
+          </label>
+          <div class="button-row">
+            <button type="submit" ${state.peerComparison.loading ? "disabled" : ""}>${state.peerComparison.loading ? "比較データを取得中..." : "比較を更新"}</button>
+          </div>
+        </form>
+        <p class="help-text">${state.peerComparison.error ? escapeHtml(state.peerComparison.error) : "PER/PBR/ROE は市場データと EDINET DB の最新取得値を優先して表示します。"}</p>
+      </section>
+      <section class="panel full">
+        <div class="row-between"><h3>比較テーブル</h3><span class="dim">${items.length}銘柄</span></div>
+        ${renderPeerComparisonTable(items, normalizeSecCode(company.sec_code))}
+      </section>
+    </div>
+  `;
+}
+
+function renderHistoricalComparison(company) {
+  const dateFrom = state.ui.historyFrom || offsetDate(-730);
+  const dateTo = state.ui.historyTo || today();
+  const items = ensurePrimaryComparisonDataset(company, state.historicalComparison.items);
+  const priceSeries = buildPriceComparisonSeries(items, dateFrom, dateTo);
+  const perSeries = buildPerComparisonSeries(items, dateFrom, dateTo);
+  return `
+    <div class="panel-grid">
+      <section class="panel">
+        <h3>ヒストリカル比較</h3>
+        <p class="help-text">株価は指定期間の期初を100とした指数比較、PER は会計期末ベースの履歴比較で表示します。</p>
+        <form data-form="historical-comparison" class="stack">
+          <label>
+            <span>比較銘柄コード</span>
+            <textarea name="codes" rows="3" placeholder="7267, 7201, 7269">${escapeHtml(state.ui.historyCodes || state.ui.peerCodes || "")}</textarea>
+          </label>
+          <div class="inline-grid two">
+            <label><span>開始日</span><input name="from" type="date" value="${escapeHtml(dateFrom)}"></label>
+            <label><span>終了日</span><input name="to" type="date" value="${escapeHtml(dateTo)}"></label>
+          </div>
+          <div class="button-row">
+            <button type="submit" ${state.historicalComparison.loading ? "disabled" : ""}>${state.historicalComparison.loading ? "ヒストリカルを取得中..." : "比較を更新"}</button>
+          </div>
+        </form>
+        <p class="help-text">${state.historicalComparison.error ? escapeHtml(state.historicalComparison.error) : "PER 履歴は EDINET DB のバリュエーション履歴、株価は Yahoo Finance 系時系列を利用します。"}</p>
+      </section>
+      <section class="panel full">
+        <div class="row-between"><h3>株価推移比較</h3><span class="dim">期初=100</span></div>
+        ${renderComparisonLineChart(priceSeries, { emptyText: "株価時系列が不足しているため比較できません。", valueFormatter: (value) => `${formatNumber(value)} / 100` })}
+      </section>
+      <section class="panel full">
+        <div class="row-between"><h3>価格サマリー</h3><span class="dim">${escapeHtml(`${formatDate(dateFrom)} - ${formatDate(dateTo)}`)}</span></div>
+        ${renderHistoricalSummaryTable(items, dateFrom, dateTo)}
+      </section>
+      <section class="panel full">
+        <div class="row-between"><h3>PER ヒストリカル比較</h3><span class="dim">会計期末ベース</span></div>
+        ${renderComparisonLineChart(perSeries, { emptyText: "PER 履歴がまだありません。", valueFormatter: (value) => `${formatNumber(value)} 倍` })}
+      </section>
+    </div>
+  `;
+}
+
+async function loadPeerComparison(form) {
+  const company = getSelectedCompany();
+  if (!company) return;
+  const formData = new FormData(form);
+  state.ui.peerCodes = String(formData.get("codes") || "");
+  saveUiState();
+  state.peerComparison = { items: [], loading: true, error: "" };
+  renderWorkspace();
+  try {
+    const items = await getComparisonDatasets(company, state.ui.peerCodes);
+    state.peerComparison = { items, loading: false, error: "" };
+  } catch (error) {
+    state.peerComparison = { items: [buildComparisonDatasetFromCompany(company, true)], loading: false, error: getErrorMessage(error) };
+  }
+  renderWorkspace();
+}
+
+async function loadHistoricalComparison(form) {
+  const company = getSelectedCompany();
+  if (!company) return;
+  const formData = new FormData(form);
+  state.ui.historyCodes = String(formData.get("codes") || "");
+  state.ui.historyFrom = String(formData.get("from") || offsetDate(-730));
+  state.ui.historyTo = String(formData.get("to") || today());
+  saveUiState();
+  state.historicalComparison = { items: [], loading: true, error: "" };
+  renderWorkspace();
+  try {
+    const items = await getComparisonDatasets(company, state.ui.historyCodes);
+    state.historicalComparison = { items, loading: false, error: "" };
+  } catch (error) {
+    state.historicalComparison = { items: [buildComparisonDatasetFromCompany(company, true)], loading: false, error: getErrorMessage(error) };
+  }
+  renderWorkspace();
+}
+
+async function getComparisonDatasets(selectedCompany, rawCodes) {
+  const peerCodes = parseComparisonCodes(rawCodes);
+  const codes = [normalizeSecCode(selectedCompany.sec_code), ...peerCodes].filter(Boolean);
+  const uniqueCodes = [...new Set(codes)].slice(0, 8);
+  const datasets = await Promise.all(uniqueCodes.map((code) => resolveComparisonDataset(code, selectedCompany)));
+  return datasets.filter(Boolean).map((item) => ({
+    ...item,
+    isPrimary: normalizeSecCode(item.sec_code) === normalizeSecCode(selectedCompany.sec_code),
+  }));
+}
+
+async function resolveComparisonDataset(secCode, selectedCompany) {
+  const code = normalizeSecCode(secCode);
+  if (!code) return null;
+  if (selectedCompany && normalizeSecCode(selectedCompany.sec_code) === code) {
+    return buildComparisonDatasetFromCompany(selectedCompany, true);
+  }
+  if (state.comparisonCache[code]) return state.comparisonCache[code];
+  const existing = state.companies.find((item) => normalizeSecCode(item.sec_code) === code);
+  if (existing) {
+    const dataset = buildComparisonDatasetFromCompany(existing, false);
+    state.comparisonCache[code] = dataset;
+    return dataset;
+  }
+  const payload = await fetchExternalData({ secCode: code });
+  const dataset = {
+    sec_code: code,
+    edinet_code: payload.company?.edinet_code || "",
+    name: payload.company?.name || code,
+    industry: payload.company?.industry || "",
+    snapshot: payload,
+    isPrimary: false,
+  };
+  state.comparisonCache[code] = dataset;
+  return dataset;
+}
+
+function buildComparisonDatasetFromCompany(company, isPrimary) {
+  return {
+    sec_code: normalizeSecCode(company.sec_code),
+    edinet_code: company.edinet_code || "",
+    name: company.name || normalizeSecCode(company.sec_code),
+    industry: company.industry || "",
+    snapshot: company.external_snapshot || normalizeExternalPayload({}, { source: "stored" }),
+    isPrimary,
+  };
+}
+
+function ensurePrimaryComparisonDataset(company, items) {
+  const primary = buildComparisonDatasetFromCompany(company, true);
+  const others = (Array.isArray(items) ? items : []).filter((item) => normalizeSecCode(item.sec_code) !== normalizeSecCode(primary.sec_code));
+  return [primary, ...others];
+}
+
+function parseComparisonCodes(rawCodes) {
+  return [...new Set(String(rawCodes || "")
+    .split(/[\s,、\n\r\t]+/)
+    .map((value) => normalizeSecCode(value))
+    .filter(Boolean))]
+    .slice(0, 7);
+}
+
+function renderPeerComparisonTable(items, primaryCode) {
+  if (!items.length) return `<div class="empty">比較対象がまだありません。</div>`;
+  const rows = [...items].sort((left, right) => {
+    if (normalizeSecCode(left.sec_code) === primaryCode) return -1;
+    if (normalizeSecCode(right.sec_code) === primaryCode) return 1;
+    return String(left.sec_code).localeCompare(String(right.sec_code));
+  });
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>銘柄</th>
+            <th>株価</th>
+            <th>PER</th>
+            <th>PBR</th>
+            <th>ROE</th>
+            <th>営業利益率</th>
+            <th>時価総額</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((item) => {
+            const price = getLatestPriceNumber(item.snapshot);
+            const market = item.snapshot?.market_snapshot?.reference_index || {};
+            const per = getCurrentPerNumber(item.snapshot);
+            const pbr = getCurrentPbrNumber(item.snapshot);
+            const roe = getCurrentRoeNumber(item.snapshot);
+            const operatingMargin = getOperatingMarginNumber(item.snapshot);
+            const marketCap = toNumberLoose(market.totalPrice);
+            return `
+              <tr class="${normalizeSecCode(item.sec_code) === primaryCode ? "selected-row" : ""}">
+                <td>${escapeHtml(`${item.sec_code} ${item.name}`)}<div class="table-subline">${escapeHtml(item.industry || "-")}</div></td>
+                <td>${escapeHtml(Number.isFinite(price) ? `${formatNumber(price)} 円` : "-")}</td>
+                <td>${escapeHtml(formatTimes(per))}</td>
+                <td>${escapeHtml(formatTimes(pbr))}</td>
+                <td>${escapeHtml(formatPercentNumber(roe))}</td>
+                <td>${escapeHtml(formatPercentNumber(operatingMargin))}</td>
+                <td>${escapeHtml(Number.isFinite(marketCap) ? formatMillionsFromMn(marketCap) : "-")}</td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderHistoricalSummaryTable(items, dateFrom, dateTo) {
+  const rows = items.map((item) => {
+    const visible = getVisiblePriceSeries(item.snapshot, dateFrom, dateTo);
+    const start = visible[0]?.close;
+    const end = visible.at(-1)?.close;
+    const change = Number.isFinite(start) && Number.isFinite(end) && start !== 0 ? ((end - start) / start) * 100 : null;
+    return {
+      code: item.sec_code,
+      name: item.name,
+      start,
+      end,
+      change,
+      currentPer: getCurrentPerNumber(item.snapshot),
+    };
+  });
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>銘柄</th>
+            <th>期初株価</th>
+            <th>期末株価</th>
+            <th>騰落率</th>
+            <th>最新PER</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td>${escapeHtml(`${row.code} ${row.name}`)}</td>
+              <td>${escapeHtml(Number.isFinite(row.start) ? `${formatNumber(row.start)} 円` : "-")}</td>
+              <td>${escapeHtml(Number.isFinite(row.end) ? `${formatNumber(row.end)} 円` : "-")}</td>
+              <td>${escapeHtml(formatSignedPercent(row.change))}</td>
+              <td>${escapeHtml(formatTimes(row.currentPer))}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function buildPriceComparisonSeries(items, dateFrom, dateTo) {
+  return items.map((item, index) => {
+    const rawPoints = getVisiblePriceSeries(item.snapshot, dateFrom, dateTo);
+    const base = rawPoints[0]?.close;
+    if (!rawPoints.length || !Number.isFinite(base) || base === 0) return null;
+    return {
+      key: item.sec_code,
+      label: `${item.sec_code} ${item.name}`,
+      color: COMPARISON_COLORS[index % COMPARISON_COLORS.length],
+      points: rawPoints.map((point) => ({
+        date: point.date,
+        value: (Number(point.close) / base) * 100,
+      })),
+    };
+  }).filter(Boolean);
+}
+
+function buildPerComparisonSeries(items, dateFrom, dateTo) {
+  return items.map((item, index) => {
+    const points = (item.snapshot?.ratios || []).map((row) => ({
+      date: getRatioRowDate(row),
+      value: getRatioValue(row, ["per"]),
+    })).filter((point) => point.date && Number.isFinite(point.value))
+      .filter((point) => point.date >= dateFrom && point.date <= dateTo)
+      .sort((left, right) => String(left.date).localeCompare(String(right.date)));
+    if (!points.length) return null;
+    return {
+      key: item.sec_code,
+      label: `${item.sec_code} ${item.name}`,
+      color: COMPARISON_COLORS[index % COMPARISON_COLORS.length],
+      points,
+    };
+  }).filter(Boolean);
+}
+
+function renderComparisonLineChart(seriesList, options = {}) {
+  const visibleSeries = (seriesList || []).filter((series) => Array.isArray(series.points) && series.points.length);
+  if (!visibleSeries.length) return `<div class="empty">${escapeHtml(options.emptyText || "比較データがありません。")}</div>`;
+  const width = 820;
+  const height = 280;
+  const padding = 42;
+  const allPoints = visibleSeries.flatMap((series) => series.points);
+  const timestamps = allPoints.map((point) => Date.parse(`${point.date}T00:00:00Z`)).filter(Number.isFinite);
+  const values = allPoints.map((point) => Number(point.value)).filter(Number.isFinite);
+  const minTs = Math.min(...timestamps);
+  const maxTs = Math.max(...timestamps);
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const range = maxValue - minValue || 1;
+  const timeSpan = maxTs - minTs || 1;
+  const yTicks = buildNumericTicks(minValue, maxValue, 4);
+  const xTicks = buildTimeAxisTicks(minTs, maxTs, width, padding);
+  const polylines = visibleSeries.map((series) => {
+    const points = series.points.map((point) => {
+      const ts = Date.parse(`${point.date}T00:00:00Z`);
+      const x = padding + ((ts - minTs) / timeSpan) * (width - padding * 2);
+      const y = chartY(Number(point.value), minValue, range, height, padding);
+      return {
+        x,
+        y,
+        label: `${series.label} / ${formatDate(point.date)} / ${options.valueFormatter ? options.valueFormatter(point.value) : formatNumber(point.value)}`,
+      };
+    });
+    return {
+      color: series.color,
+      points,
+      polyline: points.map((point) => `${point.x},${point.y}`).join(" "),
+    };
+  });
+  return `
+    <div class="comparison-chart-wrap">
+      <div class="comparison-legend">${visibleSeries.map((series) => `<span class="legend-item"><span class="legend-dot" style="background:${series.color}"></span>${escapeHtml(series.label)}</span>`).join("")}</div>
+      <svg viewBox="0 0 ${width} ${height}" class="comparison-chart" role="img" aria-label="比較チャート">
+        <rect x="0" y="0" width="${width}" height="${height}" fill="transparent"></rect>
+        ${yTicks.map((tick) => {
+          const y = chartY(tick, minValue, range, height, padding);
+          return `<g><line x1="${padding}" y1="${y}" x2="${width - padding}" y2="${y}" stroke="rgba(67,52,31,0.12)" stroke-dasharray="4 5"></line><text x="${padding - 10}" y="${y + 4}" fill="#6d5d4b" font-size="12" text-anchor="end">${escapeHtml(options.valueFormatter ? options.valueFormatter(tick) : formatNumber(tick))}</text></g>`;
+        }).join("")}
+        ${xTicks.map((tick) => `<text x="${tick.x}" y="${height - 10}" fill="#6d5d4b" font-size="12" text-anchor="middle">${escapeHtml(tick.label)}</text>`).join("")}
+        ${polylines.map((series) => `<polyline fill="none" stroke="${series.color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${series.polyline}"></polyline>`).join("")}
+        ${polylines.map((series) => series.points.map((point) => `<circle cx="${point.x}" cy="${point.y}" r="4.2" fill="${series.color}" data-point-tooltip="${escapeHtml(point.label)}"><title>${escapeHtml(point.label)}</title></circle>`).join("")).join("")}
+      </svg>
+    </div>
+  `;
+}
+
+function buildTimeAxisTicks(minTs, maxTs, width, padding) {
+  if (!Number.isFinite(minTs) || !Number.isFinite(maxTs)) return [];
+  if (minTs === maxTs) {
+    return [{ x: width / 2, label: formatAxisDate(minTs) }];
+  }
+  return Array.from({ length: 5 }, (_, index) => {
+    const ratio = index / 4;
+    const x = padding + ratio * (width - padding * 2);
+    const ts = minTs + ratio * (maxTs - minTs);
+    return { x, label: formatAxisDate(ts) };
+  });
+}
+
+function formatAxisDate(timestamp) {
+  const date = new Date(timestamp);
+  return `${String(date.getUTCFullYear()).slice(2)}/${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function getVisiblePriceSeries(snapshot, dateFrom, dateTo) {
+  return (snapshot?.price_series || [])
+    .filter((item) => String(item.date || "") >= dateFrom && String(item.date || "") <= dateTo)
+    .sort((left, right) => String(left.date).localeCompare(String(right.date)));
+}
+
+function getRatioRowDate(row) {
+  if (row?.fiscal_year_end) return String(row.fiscal_year_end).slice(0, 10);
+  const fiscalYear = Number(displayFiscalYear(row) || row?.fiscal_year || 0);
+  const month = String(row?.fiscal_year_end_month || 3).padStart(2, "0");
+  return fiscalYear ? `${fiscalYear}-${month}-01` : "";
+}
+
+function getLatestPriceNumber(snapshot) {
+  const latestSeriesPrice = Number(snapshot?.price_series?.at(-1)?.close);
+  if (Number.isFinite(latestSeriesPrice)) return latestSeriesPrice;
+  return toNumberLoose(snapshot?.market_snapshot?.price_board?.price);
+}
+
+function getCurrentPerNumber(snapshot) {
+  return pickDefinedNumber([
+    toNumberLoose(snapshot?.market_snapshot?.reference_index?.per),
+    getRatioValue(snapshot?.ratios?.[0], ["per"]),
+  ]);
+}
+
+function getCurrentPbrNumber(snapshot) {
+  return pickDefinedNumber([
+    toNumberLoose(snapshot?.market_snapshot?.reference_index?.pbr),
+    getRatioValue(snapshot?.ratios?.[0], ["pbr"]),
+  ]);
+}
+
+function getCurrentRoeNumber(snapshot) {
+  return pickDefinedNumber([
+    toNumberLoose(snapshot?.market_snapshot?.reference_index?.roe),
+    convertRatioToPercent(snapshot?.annual_financials?.[0]?.roe_official),
+    convertRatioToPercent(snapshot?.company?.latest_financials?.roe_official),
+  ]);
+}
+
+function getOperatingMarginNumber(snapshot) {
+  const latestAnnual = snapshot?.annual_financials?.[0] || snapshot?.company?.latest_financials || {};
+  const revenue = toNumberLoose(latestAnnual?.revenue);
+  const operatingIncome = toNumberLoose(latestAnnual?.operating_income);
+  if (Number.isFinite(revenue) && revenue !== 0 && Number.isFinite(operatingIncome)) {
+    return (operatingIncome / revenue) * 100;
+  }
+  return pickDefinedNumber([
+    convertRatioToPercent(snapshot?.ratios?.[0]?.operating_margin),
+    convertRatioToPercent(snapshot?.ratios?.[0]?.operating_margin_official),
+  ]);
+}
+
+function getRatioValue(row, keys) {
+  for (const key of keys) {
+    const value = toNumberLoose(row?.[key]);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function pickDefinedNumber(values) {
+  for (const value of values) {
+    if (Number.isFinite(Number(value))) return Number(value);
+  }
+  return null;
+}
+
+function convertRatioToPercent(value) {
+  const numeric = toNumberLoose(value);
+  if (!Number.isFinite(numeric)) return null;
+  return numeric <= 1 ? numeric * 100 : numeric;
+}
+
+function toNumberLoose(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const normalized = String(value ?? "").replace(/,/g, "").trim();
+  if (!normalized || normalized === "-") return null;
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function normalizeSecCode(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 4);
+}
+
+function formatPercentNumber(value) {
+  return Number.isFinite(Number(value)) ? `${formatNumber(Number(value))}%` : "-";
+}
+
+const COMPARISON_COLORS = ["#0d5b52", "#b87512", "#6b4fe0", "#9f4134", "#1b7a46", "#2c6aa8", "#8a5a44", "#7d8f22"];
 
 function renderNotes(company) {
   return `
@@ -1229,6 +1690,7 @@ function makeQuarterBucket(item) {
     source_actual: null,
     forecast: null,
     tdnet: null,
+    company_forecast: null,
   };
 }
 
@@ -1254,7 +1716,7 @@ function buildAnnualRows(company) {
       key,
       fiscal_year: Number(item.fiscal_year || 0),
       fiscal_year_end_month: Number(item.fiscal_year_end_month || inferFiscalYearEndMonth(company.external_snapshot.company)),
-      actual: chooseLaterDisclosure(existing?.actual, item),
+      actual: hasFinancialMetric(item) ? chooseLaterDisclosure(existing?.actual, item) : existing?.actual || null,
       tdnet: item,
       forecast: extractCompanyForecast(item),
       label: annualLabel(item),
@@ -2386,9 +2848,21 @@ function loadUiState() {
       activeTab: activeTab || "overview",
       earningsView: parsed.earningsView || "quarterly",
       selectedQuarterKeys: parsed.selectedQuarterKeys || {},
+      peerCodes: parsed.peerCodes || "",
+      historyCodes: parsed.historyCodes || "",
+      historyFrom: parsed.historyFrom || offsetDate(-730),
+      historyTo: parsed.historyTo || today(),
     };
   } catch {
-    return { activeTab: "overview", earningsView: "quarterly", selectedQuarterKeys: {} };
+    return {
+      activeTab: "overview",
+      earningsView: "quarterly",
+      selectedQuarterKeys: {},
+      peerCodes: "",
+      historyCodes: "",
+      historyFrom: offsetDate(-730),
+      historyTo: today(),
+    };
   }
 }
 
@@ -2702,6 +3176,8 @@ function renderWorkspace() {
     overview: renderOverviewV2(company),
     earnings: renderEarnings(company),
     valuation: renderValuation(company),
+    peers: renderPeerComparison(company),
+    history: renderHistoricalComparison(company),
     notes: renderNotesV2(company),
     questions: renderNotesV2(company),
     settings: renderAutoData(company),
@@ -2865,45 +3341,51 @@ function renderOverviewV2(company) {
 function buildQuarterBuckets(company) {
   const map = new Map();
   const cumulativeMap = new Map();
-  const annualMap = new Map();
+  const quarterTdnetMap = new Map();
+  const annualActualMap = new Map();
+  const annualTdnetMap = new Map();
 
   for (const item of company.external_snapshot.quarterly_financials) {
     if (!Number.isFinite(item.quarter) || item.quarter < 1 || item.quarter > 3) continue;
-    cumulativeMap.set(quarterKey(item), item);
+    const key = quarterKey(item);
+    cumulativeMap.set(key, chooseLaterDisclosure(cumulativeMap.get(key), item));
   }
 
   for (const item of company.external_snapshot.tdnet_earnings) {
     if (!Number.isFinite(item.quarter)) continue;
-    const targetKey = item.quarter >= 1 && item.quarter <= 3 ? quarterKey(item) : annualKey(item);
-    const existing = item.quarter >= 1 && item.quarter <= 3 ? cumulativeMap.get(targetKey) : annualMap.get(targetKey);
     if (item.quarter >= 1 && item.quarter <= 3) {
-      cumulativeMap.set(targetKey, chooseLaterDisclosure(existing, item));
+      const key = quarterKey(item);
+      quarterTdnetMap.set(key, chooseLaterDisclosure(quarterTdnetMap.get(key), item));
     } else if (item.quarter === 4) {
-      annualMap.set(targetKey, chooseLaterDisclosure(existing, item));
+      const key = annualKey(item);
+      annualTdnetMap.set(key, chooseLaterDisclosure(annualTdnetMap.get(key), item));
     }
   }
 
   for (const item of company.external_snapshot.annual_financials) {
     const key = annualKey(item);
-    if (!annualMap.has(key)) annualMap.set(key, item);
+    annualActualMap.set(key, chooseLaterDisclosure(annualActualMap.get(key), item));
   }
 
   for (const cumulative of cumulativeMap.values()) {
     const previous = cumulative.quarter > 1
       ? cumulativeMap.get(quarterKey({ fiscal_year: cumulative.fiscal_year, fiscal_year_end_month: cumulative.fiscal_year_end_month, quarter: cumulative.quarter - 1 }))
       : null;
-    const annual = annualMap.get(annualKey(cumulative));
+    const annual = annualActualMap.get(annualKey(cumulative));
     const standalone = convertToStandaloneQuarter(cumulative, previous, annual);
     const key = quarterKey(standalone);
+    const existing = map.get(key) || makeQuarterBucket(standalone);
+    const tdnet = quarterTdnetMap.get(key) || existing.tdnet || null;
     map.set(key, {
-      ...(map.get(key) || makeQuarterBucket(standalone)),
-      actual: hasFinancialMetric(standalone) ? standalone : null,
+      ...existing,
+      actual: hasFinancialMetric(standalone) ? standalone : existing.actual || null,
       source_actual: cumulative,
-      tdnet: cumulative.source_type === "tdnet" ? cumulative : map.get(key)?.tdnet || null,
+      tdnet,
+      company_forecast: extractCompanyForecast(tdnet) || existing.company_forecast || null,
     });
   }
 
-  for (const annual of annualMap.values()) {
+  for (const annual of annualActualMap.values()) {
     const q4Key = quarterKey({ fiscal_year: annual.fiscal_year, fiscal_year_end_month: annual.fiscal_year_end_month, quarter: 4 });
     const q3 = cumulativeMap.get(quarterKey({ fiscal_year: annual.fiscal_year, fiscal_year_end_month: annual.fiscal_year_end_month, quarter: 3 }));
     if (!q3) continue;
@@ -2918,11 +3400,14 @@ function buildQuarterBuckets(company) {
       eps: computeStandaloneMetric(annual.eps, q3?.eps, 4, annual.eps),
       submit_date: annual.submit_date || annual.disclosure_date || "",
     };
+    const existing = map.get(q4Key) || makeQuarterBucket(standaloneQ4);
+    const tdnet = annualTdnetMap.get(annualKey(annual)) || existing.tdnet || null;
     map.set(q4Key, {
-      ...(map.get(q4Key) || makeQuarterBucket(standaloneQ4)),
-      actual: hasFinancialMetric(standaloneQ4) ? standaloneQ4 : null,
+      ...existing,
+      actual: hasFinancialMetric(standaloneQ4) ? standaloneQ4 : existing.actual || null,
       source_actual: annual,
-      tdnet: annual.source_type === "tdnet" ? annual : map.get(q4Key)?.tdnet || null,
+      tdnet,
+      company_forecast: extractCompanyForecast(tdnet) || existing.company_forecast || null,
     });
   }
 
