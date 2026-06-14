@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#12312b">
   <title>証券アナリスト 財務指標ドリル</title>
   <link rel="manifest" href="./site.webmanifest">
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./styles.css?v=20260614-4">
 </head>
 <body>
   <div class="app-shell">
@@ -25,7 +25,7 @@
         <button class="mode-tab" type="button" data-view="edit">教材編集</button>
       </nav>
 
-      <section class="side-section">
+      <section class="side-section category-section">
         <div class="section-head">
           <h2>単元</h2>
           <button class="text-button" type="button" data-action="random">シャッフル</button>
@@ -33,14 +33,14 @@
         <div id="categoryList" class="category-list"></div>
       </section>
 
-      <section class="side-section">
+      <section class="side-section search-section">
         <label class="search-box">
           <span>検索</span>
           <input id="searchInput" type="search" autocomplete="off" placeholder="ROE / 安全性 / 支払利息">
         </label>
       </section>
 
-      <section class="side-section">
+      <section class="side-section progress-section">
         <div class="section-head">
           <h2>進捗</h2>
           <button class="text-button danger" type="button" data-action="reset-progress">リセット</button>
@@ -65,7 +65,7 @@
     </main>
   </div>
 
-  <script src="./codex-problems.js?v=20260614-3"></script>
-  <script src="./app.js?v=20260614-3"></script>
+  <script src="./codex-problems.js?v=20260614-4"></script>
+  <script src="./app.js?v=20260614-4"></script>
 </body>
 </html>

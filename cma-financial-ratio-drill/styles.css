@@ -843,14 +843,205 @@ h1 {
 }
 
 @media (max-width: 720px) {
-  .progress-summary,
-  .category-list,
-  .choice-grid,
+  body {
+    background: #fff;
+  }
+
+  button {
+    min-height: 44px;
+    padding: 0.68rem 0.75rem;
+  }
+
+  .app-shell {
+    display: block;
+    min-height: 100dvh;
+  }
+
+  .sidebar {
+    gap: 0.65rem;
+    padding: 0.75rem 0.85rem 0.85rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .brand-block {
+    padding-bottom: 0.55rem;
+  }
+
+  .brand-block h1 {
+    margin-bottom: 0;
+    font-size: 1.18rem;
+  }
+
+  .brand-block .eyebrow,
+  .brand-block .lead,
+  .search-box span {
+    display: none;
+  }
+
+  .mode-tabs {
+    display: flex;
+    gap: 0.4rem;
+    overflow-x: auto;
+    padding: 0.35rem;
+    scrollbar-width: none;
+  }
+
+  .mode-tabs::-webkit-scrollbar,
+  .category-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mode-tab {
+    min-width: max-content;
+    padding: 0.55rem 0.75rem;
+    white-space: nowrap;
+  }
+
+  .side-section {
+    padding: 0.45rem 0 0;
+  }
+
+  .progress-section {
+    display: none;
+  }
+
+  .section-head {
+    margin-bottom: 0.45rem;
+  }
+
+  .category-list {
+    display: flex;
+    gap: 0.45rem;
+    margin-top: 0;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+  }
+
+  .category-button {
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 38px;
+    padding: 0.5rem 0.7rem;
+    gap: 0.45rem;
+    scroll-snap-align: start;
+    white-space: nowrap;
+  }
+
+  .progress-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.35rem;
+    margin-top: 0.45rem;
+  }
+
+  .progress-tile {
+    padding: 0.45rem;
+  }
+
+  .progress-tile strong {
+    font-size: 1rem;
+  }
+
+  .progress-tile span {
+    font-size: 0.68rem;
+  }
+
+  .workspace {
+    display: block;
+    padding: 0;
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 12;
+    border-width: 0 0 1px;
+    border-radius: 0;
+    padding: 0.7rem 0.85rem;
+    box-shadow: 0 8px 18px rgba(18, 35, 31, 0.08);
+  }
+
+  .topbar .eyebrow {
+    display: none;
+  }
+
+  .topbar h2 {
+    font-size: 1rem;
+  }
+
+  .app-view {
+    padding: 0.75rem;
+  }
+
+  .quiz-panel,
+  .flash-panel,
+  .editor-panel,
+  .list-panel {
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .quiz-panel,
+  .flash-panel {
+    padding: 0.85rem;
+  }
+
+  .metric-title {
+    font-size: clamp(1.28rem, 7vw, 1.72rem);
+  }
+
+  .metric-subtitle {
+    margin-bottom: 1rem;
+    line-height: 1.65;
+  }
+
+  .formula-board {
+    margin: 0.85rem 0 1rem;
+  }
+
+  .slot-button {
+    min-height: 50px;
+  }
+
+  .choice-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .choice-button {
+    min-height: 46px;
+    padding: 0.55rem 0.45rem;
+    font-size: 0.92rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
   .note-grid,
-  .problem-grid,
-  .answer-panel,
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .problem-grid {
+    grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+    gap: 0.5rem;
+  }
+
+  .problem-data {
+    padding: 0.65rem;
+  }
+
+  .problem-data strong {
+    font-size: 1rem;
+    overflow-wrap: anywhere;
+  }
+
+  .answer-panel {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+  }
+
+  .answer-input {
+    min-height: 48px;
+    font-size: 1.05rem;
   }
 
   .topbar,
@@ -862,11 +1053,37 @@ h1 {
     flex-direction: column;
   }
 
+  .topbar {
+    align-items: center;
+    flex-direction: row;
+  }
+
   .topbar-actions,
-  .primary-actions,
-  .rating-actions {
+  .primary-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .topbar-actions {
+    display: flex;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+  }
+
+  .topbar-actions button {
+    min-width: 66px;
+    padding-inline: 0.65rem;
+  }
+
+  .rating-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .primary-actions button[data-action="check"],
+  .primary-actions button[data-action="check-problem"] {
+    grid-column: 1 / -1;
+    min-height: 50px;
   }
 
   .formula-line {
@@ -877,5 +1094,20 @@ h1 {
 
   .operator {
     min-height: 20px;
+  }
+}
+
+@media (max-width: 340px) {
+  .choice-grid,
+  .problem-grid,
+  .progress-summary,
+  .topbar-actions,
+  .primary-actions,
+  .rating-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .answer-panel {
+    grid-template-columns: 1fr;
   }
 }

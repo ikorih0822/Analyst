@@ -1445,7 +1445,7 @@ function renderCalculation(problem, problems) {
       <div class="answer-panel">
         <label class="field">
           <span>解答</span>
-          <input id="problemAnswerInput" class="answer-input" type="text" inputmode="decimal" autocomplete="off" value="${escapeHtml(state.problemAnswer)}" placeholder="例: ${escapeHtml(formatNumberForInput(problem.answer, problem.precision))}">
+          <input id="problemAnswerInput" class="answer-input" type="text" inputmode="decimal" enterkeyhint="done" autocomplete="off" value="${escapeHtml(state.problemAnswer)}" placeholder="例: ${escapeHtml(formatNumberForInput(problem.answer, problem.precision))}">
         </label>
         <span class="answer-unit">${escapeHtml(problem.unit)}</span>
       </div>
