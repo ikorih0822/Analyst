@@ -586,6 +586,7 @@ const state = {
   problemAnswer: "",
   problemFeedback: null,
   inlineProblemEditorOpen: false,
+  pendingProblemDeleteId: "",
   problemProgress: loadProblemProgress(),
   editorId: "",
   editorMessage: "",
@@ -618,6 +619,7 @@ function wireEvents() {
       state.problemFeedback = null;
       state.inlineMetricEditorOpen = false;
       state.inlineProblemEditorOpen = false;
+      state.pendingProblemDeleteId = "";
       saveUi();
       render();
       return;
@@ -676,6 +678,7 @@ function wireEvents() {
     if (problemButton) {
       state.view = "calculation";
       state.inlineProblemEditorOpen = false;
+      state.pendingProblemDeleteId = "";
       setCurrentProblem(problemButton.dataset.problemId);
       saveUi();
       render();
@@ -737,9 +740,13 @@ function handleAction(action) {
   }
   if (action === "toggle-current-problem-editor") {
     state.inlineProblemEditorOpen = !state.inlineProblemEditorOpen;
+    state.pendingProblemDeleteId = "";
     render();
   }
   if (action === "duplicate-current-problem") duplicateCurrentProblem();
+  if (action === "delete-current-problem") requestDeleteCurrentProblem();
+  if (action === "cancel-delete-current-problem") cancelDeleteCurrentProblem();
+  if (action === "confirm-delete-current-problem") deleteCurrentProblem();
   if (action === "toggle-card") {
     state.showCardAnswer = !state.showCardAnswer;
     render();
@@ -980,6 +987,7 @@ function setCurrentProblem(id) {
   state.currentProblemId = id;
   state.problemAnswer = "";
   state.problemFeedback = null;
+  state.pendingProblemDeleteId = "";
 }
 
 function prepareQuestion(metric) {
@@ -1448,7 +1456,7 @@ function renderCalculation(problem, problems) {
           <button class="ghost" type="button" data-action="show-problem-answer">答え</button>
           <button class="ghost" type="button" data-action="random">シャッフル</button>
           <button class="ghost" type="button" data-action="toggle-current-problem-editor">${state.inlineProblemEditorOpen ? "編集を閉じる" : "この問題を編集"}</button>
-          <button class="ghost" type="button" data-action="duplicate-current-problem">複製</button>
+          <button class="ghost" type="button" data-action="duplicate-current-problem">類題を作成</button>
         </div>
         <div class="rating-actions">
           <button class="ghost" type="button" data-action="rate-review">復習</button>
@@ -1691,12 +1699,13 @@ function renderMetricEditForm(metric, mode = "standalone") {
 }
 
 function renderProblemEditForm(problem) {
+  const confirmingDelete = state.pendingProblemDeleteId === problem.id;
   return `
     <form class="inline-editor" data-form="problem-editor">
       <div class="list-head">
         <div>
           <h3>問題を編集</h3>
-          <p class="panel-subtitle">問題文・正解・解説をその場で修正できます。別問題として作りたい場合は先に「複製」を押します。</p>
+          <p class="panel-subtitle">問題文・正解・解説をその場で修正できます。別問題として作りたい場合は先に「類題を作成」を押します。</p>
         </div>
       </div>
       <input type="hidden" name="originalId" value="${escapeHtml(problem.id)}">
@@ -1718,8 +1727,19 @@ function renderProblemEditForm(problem) {
           <div class="primary-actions">
             <button type="submit">保存</button>
             <button class="ghost" type="button" data-action="toggle-current-problem-editor">閉じる</button>
+            <button class="ghost danger-button" type="button" data-action="delete-current-problem">この問題を削除</button>
           </div>
         </div>
+        ${confirmingDelete ? `
+          <div class="delete-confirmation">
+            <strong>この問題を削除しますか？</strong>
+            <span>${escapeHtml(problem.title)}</span>
+            <div class="primary-actions">
+              <button class="danger-solid" type="button" data-action="confirm-delete-current-problem">削除する</button>
+              <button class="ghost" type="button" data-action="cancel-delete-current-problem">キャンセル</button>
+            </div>
+          </div>
+        ` : ""}
       </div>
     </form>
   `;
@@ -1882,11 +1902,77 @@ function duplicateCurrentProblem() {
   state.problemAnswer = "";
   state.problemFeedback = {
     type: "good",
-    title: "複製しました",
+    title: "類題を作成しました",
     message: "内容を編集して保存できます。",
   };
   state.inlineProblemEditorOpen = true;
+  state.pendingProblemDeleteId = "";
   saveContentData();
+  saveUi();
+  render();
+}
+
+function requestDeleteCurrentProblem() {
+  const problem = getCurrentProblem();
+  if (!problem) return;
+  if (state.calculationProblems.length <= 1) {
+    state.problemFeedback = {
+      type: "bad",
+      title: "削除できません",
+      message: "最後の1問は削除できません。",
+    };
+    render();
+    return;
+  }
+
+  state.pendingProblemDeleteId = problem.id;
+  state.problemFeedback = null;
+  render();
+}
+
+function cancelDeleteCurrentProblem() {
+  state.pendingProblemDeleteId = "";
+  render();
+}
+
+function deleteCurrentProblem() {
+  const problem = state.calculationProblems.find((item) => item.id === state.pendingProblemDeleteId) || getCurrentProblem();
+  if (!problem) return;
+  if (state.calculationProblems.length <= 1) {
+    state.problemFeedback = {
+      type: "bad",
+      title: "削除できません",
+      message: "最後の1問は削除できません。",
+    };
+    state.pendingProblemDeleteId = "";
+    render();
+    return;
+  }
+
+  const previousFiltered = getFilteredProblems();
+  const currentIndex = Math.max(0, previousFiltered.findIndex((item) => item.id === problem.id));
+  state.calculationProblems = state.calculationProblems.filter((item) => item.id !== problem.id);
+  delete state.problemProgress[problem.id];
+
+  let candidates = getFilteredProblems();
+  if (!candidates.length && state.category !== "すべて") {
+    state.category = "すべて";
+    candidates = getFilteredProblems();
+  }
+
+  const nextIndex = Math.min(currentIndex, Math.max(candidates.length - 1, 0));
+  const nextProblem = candidates[nextIndex] || state.calculationProblems[0];
+  state.currentProblemId = nextProblem.id;
+  state.problemAnswer = "";
+  state.problemFeedback = {
+    type: "good",
+    title: "削除しました",
+    message: `${problem.title} を削除しました。`,
+  };
+  state.inlineProblemEditorOpen = false;
+  state.pendingProblemDeleteId = "";
+  saveContentData();
+  saveProblemProgress();
   saveUi();
   render();
 }

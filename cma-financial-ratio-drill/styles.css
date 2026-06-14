@@ -86,6 +86,24 @@ button.ghost:hover,
   border-color: #afc3bb;
 }
 
+button.ghost.danger-button {
+  color: #a33a30;
+  border-color: #efc0ba;
+}
+
+button.ghost.danger-button:hover {
+  background: #fff2f0;
+  border-color: #d7837b;
+}
+
+button.danger-solid {
+  background: #a33a30;
+}
+
+button.danger-solid:hover {
+  background: #842d25;
+}
+
 .text-button {
   min-height: auto;
   background: transparent;
@@ -481,6 +499,22 @@ h1 {
 .feedback.bad {
   border-left-color: var(--red);
   background: #fff4f3;
+}
+
+.delete-confirmation {
+  margin-top: 1rem;
+  border: 1px solid #efc0ba;
+  border-left: 5px solid var(--red);
+  border-radius: var(--radius);
+  background: #fff7f6;
+  color: var(--ink);
+  padding: 0.9rem 1rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.delete-confirmation span {
+  color: var(--muted);
 }
 
 .answer-line {
