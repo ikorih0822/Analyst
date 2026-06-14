@@ -1,0 +1,9 @@
+{
+  "name": "証券アナリスト 財務指標ドリル",
+  "short_name": "財務指標",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f5f7f4",
+  "theme_color": "#12312b",
+  "lang": "ja"
+}

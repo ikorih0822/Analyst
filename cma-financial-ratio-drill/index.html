@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#12312b">
+  <title>証券アナリスト 財務指標ドリル</title>
+  <link rel="manifest" href="./site.webmanifest">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-block">
+        <p class="eyebrow">CMA Financial Analysis</p>
+        <h1>財務指標ドリル</h1>
+        <p class="lead">分子・分母・単位を手で埋めて、比率式を反射で出せる状態にする。</p>
+      </div>
+
+      <nav class="mode-tabs" aria-label="学習モード">
+        <button class="mode-tab active" type="button" data-view="drill">穴埋め</button>
+        <button class="mode-tab" type="button" data-view="calculation">計算問題</button>
+        <button class="mode-tab" type="button" data-view="cards">暗記カード</button>
+        <button class="mode-tab" type="button" data-view="list">指標一覧</button>
+        <button class="mode-tab" type="button" data-view="edit">教材編集</button>
+      </nav>
+
+      <section class="side-section">
+        <div class="section-head">
+          <h2>単元</h2>
+          <button class="text-button" type="button" data-action="random">シャッフル</button>
+        </div>
+        <div id="categoryList" class="category-list"></div>
+      </section>
+
+      <section class="side-section">
+        <label class="search-box">
+          <span>検索</span>
+          <input id="searchInput" type="search" autocomplete="off" placeholder="ROE / 安全性 / 支払利息">
+        </label>
+      </section>
+
+      <section class="side-section">
+        <div class="section-head">
+          <h2>進捗</h2>
+          <button class="text-button danger" type="button" data-action="reset-progress">リセット</button>
+        </div>
+        <div id="progressSummary" class="progress-summary"></div>
+      </section>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Formula Recall</p>
+          <h2 id="workspaceTitle">穴埋めドリル</h2>
+        </div>
+        <div class="topbar-actions">
+          <button class="ghost" type="button" data-action="previous">前へ</button>
+          <button type="button" data-action="next">次へ</button>
+        </div>
+      </header>
+
+      <section id="appView" class="app-view" aria-live="polite"></section>
+    </main>
+  </div>
+
+  <script src="./codex-problems.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
