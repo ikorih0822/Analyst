@@ -157,7 +157,7 @@ const DEFAULT_METRICS = [
   },
   {
     id: "interest-coverage",
-    short: "ICR",
+    short: "インタレスト・カバレッジ・レシオ",
     name: "インタレスト・カバレッジ・レシオ",
     category: "安全性",
     numerator: "事業利益",
@@ -410,7 +410,7 @@ const DEFAULT_CALC_PROBLEMS = [
     tolerance: 0.05,
     unit: "倍",
     precision: 1,
-    formula: "ICR = 事業利益 / 支払利息・割引料",
+    formula: "インタレスト・カバレッジ・レシオ = 事業利益 / 支払利息・割引料",
     explanation: "事業利益は2,400 + 100 = 2,500百万円。2,500 / 500 = 5.0倍。",
   },
   {
@@ -582,8 +582,10 @@ const state = {
   answers: { numerator: "", denominator: "" },
   choices: [],
   feedback: null,
+  inlineMetricEditorOpen: false,
   problemAnswer: "",
   problemFeedback: null,
+  inlineProblemEditorOpen: false,
   problemProgress: loadProblemProgress(),
   editorId: "",
   editorMessage: "",
@@ -614,6 +616,8 @@ function wireEvents() {
       state.view = viewButton.dataset.view;
       state.showCardAnswer = false;
       state.problemFeedback = null;
+      state.inlineMetricEditorOpen = false;
+      state.inlineProblemEditorOpen = false;
       saveUi();
       render();
       return;
@@ -650,6 +654,7 @@ function wireEvents() {
     const metricButton = event.target.closest("[data-metric-id]");
     if (metricButton) {
       state.view = "drill";
+      state.inlineMetricEditorOpen = false;
       setCurrentMetric(metricButton.dataset.metricId);
       saveUi();
       render();
@@ -670,6 +675,7 @@ function wireEvents() {
     const problemButton = event.target.closest("[data-problem-id]");
     if (problemButton) {
       state.view = "calculation";
+      state.inlineProblemEditorOpen = false;
       setCurrentProblem(problemButton.dataset.problemId);
       saveUi();
       render();
@@ -684,9 +690,10 @@ function wireEvents() {
   document.addEventListener("submit", (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
-    if (form.dataset.form !== "metric-editor") return;
+    if (!["metric-editor", "problem-editor"].includes(form.dataset.form)) return;
     event.preventDefault();
-    saveMetricFromForm(form);
+    if (form.dataset.form === "metric-editor") saveMetricFromForm(form);
+    if (form.dataset.form === "problem-editor") saveProblemFromForm(form);
   });
 
   document.addEventListener("input", (event) => {
@@ -724,6 +731,15 @@ function handleAction(action) {
   if (action === "show-problem-answer") showProblemAnswer();
   if (action === "clear-answer") clearAnswer();
   if (action === "show-answer") showAnswer();
+  if (action === "toggle-current-metric-editor") {
+    state.inlineMetricEditorOpen = !state.inlineMetricEditorOpen;
+    render();
+  }
+  if (action === "toggle-current-problem-editor") {
+    state.inlineProblemEditorOpen = !state.inlineProblemEditorOpen;
+    render();
+  }
+  if (action === "duplicate-current-problem") duplicateCurrentProblem();
   if (action === "toggle-card") {
     state.showCardAnswer = !state.showCardAnswer;
     render();
@@ -1346,6 +1362,7 @@ function renderDrill(metric, metrics) {
           <button type="button" data-action="check">判定</button>
           <button class="ghost" type="button" data-action="show-answer">答え</button>
           <button class="ghost" type="button" data-action="clear-answer">クリア</button>
+          <button class="ghost" type="button" data-action="toggle-current-metric-editor">${state.inlineMetricEditorOpen ? "編集を閉じる" : "この指標を編集"}</button>
         </div>
         <div class="rating-actions">
           <button class="ghost" type="button" data-action="rate-review">復習</button>
@@ -1366,6 +1383,7 @@ function renderDrill(metric, metrics) {
           <p class="answer-line">${escapeHtml(buildFormula(metric))}</p>
         </div>
       </div>
+      ${state.inlineMetricEditorOpen ? renderMetricEditForm(metric, "inline") : ""}
     </article>
   `;
 }
@@ -1429,6 +1447,8 @@ function renderCalculation(problem, problems) {
           <button type="button" data-action="check-problem">判定</button>
           <button class="ghost" type="button" data-action="show-problem-answer">答え</button>
           <button class="ghost" type="button" data-action="random">シャッフル</button>
+          <button class="ghost" type="button" data-action="toggle-current-problem-editor">${state.inlineProblemEditorOpen ? "編集を閉じる" : "この問題を編集"}</button>
+          <button class="ghost" type="button" data-action="duplicate-current-problem">複製</button>
         </div>
         <div class="rating-actions">
           <button class="ghost" type="button" data-action="rate-review">復習</button>
@@ -1439,6 +1459,7 @@ function renderCalculation(problem, problems) {
 
       ${renderProblemFeedback(problem)}
       ${state.problemFeedback ? renderProblemSolution(problem) : ""}
+      ${state.inlineProblemEditorOpen ? renderProblemEditForm(problem) : ""}
     </article>
   `;
 }
@@ -1635,6 +1656,75 @@ function renderEditor() {
   `;
 }
 
+function renderMetricEditForm(metric, mode = "standalone") {
+  return `
+    <form class="inline-editor" data-form="metric-editor">
+      <div class="list-head">
+        <div>
+          <h3>指標を編集</h3>
+          <p class="panel-subtitle">保存すると、穴埋め・カード・一覧の表示にすぐ反映されます。</p>
+        </div>
+      </div>
+      <input type="hidden" name="originalId" value="${escapeHtml(metric.id)}">
+      <div class="editor-form">
+        <div class="form-grid">
+          ${fieldInput("id", "ID", metric.id, "interest-coverage")}
+          ${fieldInput("short", "表示名", metric.short, "インタレスト・カバレッジ・レシオ")}
+          ${fieldInput("name", "名称", metric.name, "インタレスト・カバレッジ・レシオ")}
+          ${fieldInput("category", "単元", metric.category, "安全性")}
+          ${fieldInput("numerator", "分子", metric.numerator, "事業利益")}
+          ${fieldInput("denominator", "分母", metric.denominator, "支払利息・割引料")}
+          ${fieldInput("multiplier", "倍率", metric.multiplier, "×100")}
+          ${fieldInput("unit", "単位", metric.unit, "倍")}
+          ${fieldTextarea("meaning", "意味", metric.meaning)}
+          ${fieldTextarea("note", "メモ", metric.note)}
+        </div>
+        <div class="card-actions">
+          <div class="primary-actions">
+            <button type="submit">保存</button>
+            ${mode === "inline" ? `<button class="ghost" type="button" data-action="toggle-current-metric-editor">閉じる</button>` : ""}
+          </div>
+        </div>
+      </div>
+    </form>
+  `;
+}
+
+function renderProblemEditForm(problem) {
+  return `
+    <form class="inline-editor" data-form="problem-editor">
+      <div class="list-head">
+        <div>
+          <h3>問題を編集</h3>
+          <p class="panel-subtitle">問題文・正解・解説をその場で修正できます。別問題として作りたい場合は先に「複製」を押します。</p>
+        </div>
+      </div>
+      <input type="hidden" name="originalId" value="${escapeHtml(problem.id)}">
+      <div class="editor-form">
+        <div class="form-grid">
+          ${fieldInput("id", "ID", problem.id, "advanced-new-problem")}
+          ${fieldInput("title", "タイトル", problem.title, "ROE分解")}
+          ${fieldInput("category", "単元", problem.category, "応用")}
+          ${fieldInput("answer", "正解数値", formatNumberForInput(problem.answer, problem.precision), "12.3")}
+          ${fieldInput("tolerance", "許容誤差", problem.tolerance, "0.05")}
+          ${fieldInput("unit", "単位", problem.unit, "%")}
+          ${fieldInput("precision", "表示桁数", problem.precision, "1")}
+          ${fieldTextarea("prompt", "問題文", problem.prompt, 4)}
+          ${fieldTextarea("data", "表示データ", formatProblemData(problem.data), 5)}
+          ${fieldTextarea("formula", "使う式", problem.formula, 3)}
+          ${fieldTextarea("explanation", "解説", problem.explanation, 4)}
+        </div>
+        <div class="card-actions">
+          <div class="primary-actions">
+            <button type="submit">保存</button>
+            <button class="ghost" type="button" data-action="toggle-current-problem-editor">閉じる</button>
+          </div>
+        </div>
+      </div>
+    </form>
+  `;
+}
+
 function fieldInput(name, label, value, placeholder) {
   return `
     <label class="field">
@@ -1644,11 +1734,11 @@ function fieldInput(name, label, value, placeholder) {
   `;
 }
 
-function fieldTextarea(name, label, value) {
+function fieldTextarea(name, label, value, rows = 3) {
   return `
     <label class="field full">
       <span>${escapeHtml(label)}</span>
-      <textarea name="${escapeHtml(name)}" rows="3">${escapeHtml(value || "")}</textarea>
+      <textarea name="${escapeHtml(name)}" rows="${escapeHtml(rows)}">${escapeHtml(value || "")}</textarea>
     </label>
   `;
 }
@@ -1715,8 +1805,88 @@ function saveMetricFromForm(form) {
   state.category = metric.category;
   state.editorMessage = `${metric.short} を保存しました。`;
   state.editorMessageType = "good";
+  state.inlineMetricEditorOpen = false;
   saveContentData();
   prepareQuestion(metric);
+  saveUi();
+  render();
+}
+
+function saveProblemFromForm(form) {
+  const formData = new FormData(form);
+  const originalId = String(formData.get("originalId") || "").trim();
+  const problem = sanitizeProblems([{
+    id: String(formData.get("id") || "").trim() || String(formData.get("title") || "").trim(),
+    title: formData.get("title"),
+    category: formData.get("category"),
+    prompt: formData.get("prompt"),
+    data: parseProblemData(String(formData.get("data") || "")),
+    answer: parseAnswerNumber(formData.get("answer")),
+    tolerance: parseAnswerNumber(formData.get("tolerance")),
+    unit: formData.get("unit"),
+    precision: parseAnswerNumber(formData.get("precision")),
+    formula: formData.get("formula"),
+    explanation: formData.get("explanation"),
+  }])[0];
+
+  if (!problem) {
+    state.problemFeedback = {
+      type: "bad",
+      title: "保存できませんでした",
+      message: "正解数値を確認してください。",
+    };
+    render();
+    return;
+  }
+
+  const duplicate = state.calculationProblems.some((item) => item.id === problem.id && item.id !== originalId);
+  if (duplicate) {
+    state.problemFeedback = {
+      type: "bad",
+      title: "保存できませんでした",
+      message: "同じIDの計算問題があります。IDを変えてください。",
+    };
+    render();
+    return;
+  }
+
+  const index = state.calculationProblems.findIndex((item) => item.id === originalId);
+  if (index >= 0) {
+    state.calculationProblems[index] = problem;
+  } else {
+    state.calculationProblems.push(problem);
+  }
+
+  state.currentProblemId = problem.id;
+  state.category = problem.category;
+  state.problemAnswer = "";
+  state.problemFeedback = {
+    type: "good",
+    title: "保存しました",
+    message: `${problem.title} を更新しました。`,
+  };
+  state.inlineProblemEditorOpen = false;
+  saveContentData();
+  saveUi();
+  render();
+}
+
+function duplicateCurrentProblem() {
+  const problem = getCurrentProblem();
+  if (!problem) return;
+  const copy = clone(problem);
+  copy.id = uniqueProblemId(`${problem.id}-copy`);
+  copy.title = `${problem.title} コピー`;
+  state.calculationProblems.push(copy);
+  state.currentProblemId = copy.id;
+  state.problemAnswer = "";
+  state.problemFeedback = {
+    type: "good",
+    title: "複製しました",
+    message: "内容を編集して保存できます。",
+  };
+  state.inlineProblemEditorOpen = true;
+  saveContentData();
   saveUi();
   render();
 }
@@ -1822,11 +1992,32 @@ function getCategoryOrder() {
 }
 
 function parseAnswerNumber(value) {
-  return Number(String(value || "").replaceAll(",", "").replace(/[^\d.+-]/g, ""));
+  const normalized = String(value || "").replaceAll(",", "").replace(/[^\d.+-]/g, "");
+  return normalized.trim() ? Number(normalized) : NaN;
 }
 
 function formatProblemAnswer(problem) {
   return `${formatNumberForInput(problem.answer, problem.precision)}${problem.unit}`;
+}
+
+function formatProblemData(data) {
+  return (data || []).map((item) => `${item.label}: ${item.value}`).join("\n");
+}
+
+function parseProblemData(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const separatorIndex = line.search(/[:：,，\t]/);
+      if (separatorIndex < 0) return { label: line, value: "" };
+      return {
+        label: line.slice(0, separatorIndex).trim(),
+        value: line.slice(separatorIndex + 1).trim(),
+      };
+    })
+    .filter((item) => item.label || item.value);
 }
 
 function formatNumberForInput(value, precision = 2) {
@@ -1843,6 +2034,17 @@ function normalizeId(value) {
     .replace(/[^\w\u3040-\u30ff\u3400-\u9fff-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return normalized || `item-${Date.now()}`;
+}
+
+function uniqueProblemId(baseId) {
+  const base = normalizeId(baseId);
+  let candidate = base;
+  let index = 2;
+  while (state.calculationProblems.some((problem) => problem.id === candidate)) {
+    candidate = `${base}-${index}`;
+    index += 1;
+  }
+  return candidate;
 }
 
 function normalize(value) {
